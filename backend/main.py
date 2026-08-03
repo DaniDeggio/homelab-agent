@@ -10,6 +10,7 @@ def main():
     
     args = parser.parse_args()
     
+    thread_id = args.thread or "default"
     print(f"Task in esecuzione: {args.task}")
     if args.thread:
         print(f"Memoria e Checkpoint attivi per il thread: {args.thread}")
@@ -30,7 +31,7 @@ def main():
         "final_response": ""
     }
     
-    config = {"configurable": {"thread_id": args.thread}} if args.thread else {}
+    config = {"configurable": {"thread_id": thread_id}}
     final_state = app.invoke(initial_state, config=config)
     print("\n--- RISPOSTA FINALE ---")
     print(final_state.get("final_response"))

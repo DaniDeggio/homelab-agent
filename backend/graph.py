@@ -94,6 +94,8 @@ def ask_graph_node(state: AgentState) -> AgentState:
     else:
         if "preferenza" in task_lower:
             ans = "In base alle preferenze salvate: preferisci i container Debian."
+        elif "tool" in task_lower or "strument" in task_lower or "accesso" in task_lower:
+            ans = "Ho accesso ai tool di Proxmox (LXC, IPAM, DNS, NPM, Agy) registrati su MetaMCP."
         else:
             ans = f"Query di retrieval per: '{task}'. Nessun contesto pregresso trovato."
 
@@ -168,15 +170,14 @@ def respond_node(state: AgentState) -> AgentState:
     return {"final_response": formatted}
 
 def commit_memory_node(state: AgentState) -> AgentState:
-    """Commits task and final response to Letta thread if agent_id is active."""
+    """Commits task and final response to Letta thread in a single atomic turn to prevent duplicate responses."""
     agent_id = state.get("agent_id")
     final_response = state.get("final_response", "")
     task = state.get("task", "")
 
-    if agent_id:
-        letta_client.send_message(agent_id, "user", task)
-        if final_response:
-            letta_client.send_message(agent_id, "assistant", final_response)
+    if agent_id and final_response:
+        combined_entry = f"User: {task}\nAssistant: {final_response}"
+        letta_client.send_message(agent_id, "user", combined_entry)
 
     return state
 
