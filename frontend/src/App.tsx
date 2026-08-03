@@ -17,6 +17,10 @@ export function App() {
   const [isBackendHealthy, setIsBackendHealthy] = useState<boolean | null>(null);
   const [error, setError] = useState<string | null>(null);
 
+  // Mobile Drawers Navigation state
+  const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState<boolean>(false);
+  const [isMobileToolLogOpen, setIsMobileToolLogOpen] = useState<boolean>(false);
+
   // Diagnostic states for ToolLog sidebar
   const [activeTool, setActiveTool] = useState<string | undefined>(undefined);
   const [activePlan, setActivePlan] = useState<string[] | undefined>(undefined);
@@ -130,6 +134,7 @@ export function App() {
     setActiveTool(undefined);
     setActivePlan(undefined);
     setActiveMode(undefined);
+    setIsMobileSidebarOpen(false);
   };
 
   // Handle Thread selection
@@ -138,6 +143,7 @@ export function App() {
     localStorage.setItem('main_agent_current_thread', id);
     setError(null);
     loadThreadHistory(id);
+    setIsMobileSidebarOpen(false);
   };
 
   // Handle Send Message
@@ -230,20 +236,38 @@ export function App() {
   const currentMessages = currentThreadId ? threadMessagesMap[currentThreadId] || [] : [];
 
   return (
-    <div className="flex h-screen w-screen bg-slate-950 overflow-hidden font-sans">
-      {/* Left Sidebar: Threads */}
-      <ThreadList
-        threads={threads}
-        currentThreadId={currentThreadId}
-        onSelectThread={handleSelectThread}
-        onNewThread={handleNewThread}
-        onRefresh={() => {
-          loadThreads();
-          if (currentThreadId) loadThreadHistory(currentThreadId);
-        }}
-        isLoading={isLoadingThreads}
-        isBackendHealthy={isBackendHealthy}
-      />
+    <div className="flex h-dvh w-screen bg-slate-950 overflow-hidden font-sans relative">
+      {/* Mobile Backdrop Overlay */}
+      {(isMobileSidebarOpen || isMobileToolLogOpen) && (
+        <div
+          onClick={() => {
+            setIsMobileSidebarOpen(false);
+            setIsMobileToolLogOpen(false);
+          }}
+          className="fixed inset-0 bg-slate-950/80 backdrop-blur-sm z-40 md:hidden transition-opacity"
+        />
+      )}
+
+      {/* Left Sidebar: Threads (Responsive Drawer) */}
+      <div
+        className={`fixed md:relative inset-y-0 left-0 z-50 md:z-auto transform ${
+          isMobileSidebarOpen ? 'translate-x-0' : '-translate-x-full md:translate-x-0'
+        } transition-transform duration-300 ease-in-out flex shrink-0`}
+      >
+        <ThreadList
+          threads={threads}
+          currentThreadId={currentThreadId}
+          onSelectThread={handleSelectThread}
+          onNewThread={handleNewThread}
+          onRefresh={() => {
+            loadThreads();
+            if (currentThreadId) loadThreadHistory(currentThreadId);
+          }}
+          isLoading={isLoadingThreads}
+          isBackendHealthy={isBackendHealthy}
+          onCloseMobile={() => setIsMobileSidebarOpen(false)}
+        />
+      </div>
 
       {/* Main Area: Chat */}
       <Chat
@@ -253,16 +277,25 @@ export function App() {
         isLoading={isLoadingChat}
         error={error}
         onClearError={() => setError(null)}
+        onOpenMobileSidebar={() => setIsMobileSidebarOpen(true)}
+        onOpenMobileToolLog={() => setIsMobileToolLogOpen(true)}
       />
 
-      {/* Right Sidebar: Tool & Plan Log */}
-      <ToolLog
-        toolUsed={activeTool}
-        planSteps={activePlan}
-        mode={activeMode}
-        isOpen={isToolLogOpen}
-        onToggle={() => setIsToolLogOpen(!isToolLogOpen)}
-      />
+      {/* Right Sidebar: Tool & Plan Log (Responsive Drawer) */}
+      <div
+        className={`fixed md:relative inset-y-0 right-0 z-50 md:z-auto transform ${
+          isMobileToolLogOpen ? 'translate-x-0' : 'translate-x-full md:translate-x-0'
+        } transition-transform duration-300 ease-in-out flex shrink-0`}
+      >
+        <ToolLog
+          toolUsed={activeTool}
+          planSteps={activePlan}
+          mode={activeMode}
+          isOpen={isToolLogOpen}
+          onToggle={() => setIsToolLogOpen(!isToolLogOpen)}
+          onCloseMobile={() => setIsMobileToolLogOpen(false)}
+        />
+      </div>
     </div>
   );
 }

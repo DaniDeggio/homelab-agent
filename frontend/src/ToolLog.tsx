@@ -1,5 +1,5 @@
 import React from 'react';
-import { Wrench, ListChecks, Activity, ShieldCheck, ChevronRight, Zap } from 'lucide-react';
+import { Wrench, ListChecks, Activity, ShieldCheck, ChevronRight, Zap, X } from 'lucide-react';
 
 interface ToolLogProps {
   toolUsed?: string;
@@ -7,6 +7,7 @@ interface ToolLogProps {
   mode?: string;
   isOpen: boolean;
   onToggle: () => void;
+  onCloseMobile?: () => void;
 }
 
 export const ToolLog: React.FC<ToolLogProps> = ({
@@ -15,6 +16,7 @@ export const ToolLog: React.FC<ToolLogProps> = ({
   mode,
   isOpen,
   onToggle,
+  onCloseMobile,
 }) => {
   const hasContent = Boolean(toolUsed || (planSteps && planSteps.length > 0) || mode);
 
@@ -31,6 +33,16 @@ export const ToolLog: React.FC<ToolLogProps> = ({
           {isOpen && <span className="font-semibold text-xs text-slate-200 flex-1 text-left">Agent Diagnostics</span>}
           <ChevronRight size={16} className={`text-slate-400 transition-transform ${isOpen ? 'rotate-180' : ''}`} />
         </button>
+
+        {onCloseMobile && (
+          <button
+            onClick={onCloseMobile}
+            className="md:hidden p-1 text-slate-400 hover:text-white hover:bg-slate-800 rounded transition ml-1"
+            title="Close diagnostics"
+          >
+            <X size={18} />
+          </button>
+        )}
       </div>
 
       {isOpen ? (

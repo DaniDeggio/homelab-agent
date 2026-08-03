@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import type { ThreadItem } from './api';
-import { MessageSquare, Plus, Search, RefreshCw, Cpu } from 'lucide-react';
+import { MessageSquare, Plus, Search, RefreshCw, Cpu, X } from 'lucide-react';
 
 interface ThreadListProps {
   threads: ThreadItem[];
@@ -10,6 +10,7 @@ interface ThreadListProps {
   onRefresh: () => void;
   isLoading: boolean;
   isBackendHealthy: boolean | null;
+  onCloseMobile?: () => void;
 }
 
 export const ThreadList: React.FC<ThreadListProps> = ({
@@ -20,6 +21,7 @@ export const ThreadList: React.FC<ThreadListProps> = ({
   onRefresh,
   isLoading,
   isBackendHealthy,
+  onCloseMobile,
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
 
@@ -27,6 +29,16 @@ export const ThreadList: React.FC<ThreadListProps> = ({
     t.thread_id.toLowerCase().includes(searchTerm.toLowerCase()) ||
     (t.last_message && t.last_message.toLowerCase().includes(searchTerm.toLowerCase()))
   );
+
+  const handleSelect = (id: string) => {
+    onSelectThread(id);
+    if (onCloseMobile) onCloseMobile();
+  };
+
+  const handleCreateNew = () => {
+    onNewThread();
+    if (onCloseMobile) onCloseMobile();
+  };
 
   return (
     <div className="w-80 bg-slate-900 border-r border-slate-800 flex flex-col h-full shrink-0">
@@ -47,20 +59,31 @@ export const ThreadList: React.FC<ThreadListProps> = ({
           </div>
         </div>
 
-        <button
-          onClick={onRefresh}
-          disabled={isLoading}
-          className="p-1.5 text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded-md transition"
-          title="Refresh threads"
-        >
-          <RefreshCw size={15} className={isLoading ? 'animate-spin' : ''} />
-        </button>
+        <div className="flex items-center gap-1">
+          <button
+            onClick={onRefresh}
+            disabled={isLoading}
+            className="p-1.5 text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded-md transition"
+            title="Refresh threads"
+          >
+            <RefreshCw size={15} className={isLoading ? 'animate-spin' : ''} />
+          </button>
+          {onCloseMobile && (
+            <button
+              onClick={onCloseMobile}
+              className="md:hidden p-1.5 text-slate-400 hover:text-white hover:bg-slate-800 rounded-md transition"
+              title="Close sidebar"
+            >
+              <X size={18} />
+            </button>
+          )}
+        </div>
       </div>
 
       {/* New Thread Action */}
       <div className="p-3">
         <button
-          onClick={onNewThread}
+          onClick={handleCreateNew}
           className="w-full py-2.5 px-3 bg-blue-600 hover:bg-blue-500 text-white rounded-lg font-medium text-xs flex items-center justify-center gap-2 shadow-lg shadow-blue-600/20 transition active:scale-[0.98]"
         >
           <Plus size={16} />
@@ -94,7 +117,7 @@ export const ThreadList: React.FC<ThreadListProps> = ({
             return (
               <button
                 key={thread.thread_id}
-                onClick={() => onSelectThread(thread.thread_id)}
+                onClick={() => handleSelect(thread.thread_id)}
                 className={`w-full text-left p-2.5 rounded-lg border transition flex flex-col gap-1 ${
                   isSelected
                     ? 'bg-slate-800/90 border-blue-500/40 text-slate-100 shadow-sm'
