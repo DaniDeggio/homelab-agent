@@ -34,6 +34,7 @@ def verify_api_key(x_api_key: Optional[str] = Security(api_key_header)):
     return x_api_key
 
 def run_agent_flow(task: str, thread_id: Optional[str], force_mode: Optional[str] = None) -> ChatResponse:
+    effective_thread_id = thread_id or "default"
     initial_state = {
         "task": task,
         "thread_id": thread_id,
@@ -46,7 +47,7 @@ def run_agent_flow(task: str, thread_id: Optional[str], force_mode: Optional[str
         "final_response": ""
     }
     
-    cfg = {"configurable": {"thread_id": thread_id}} if thread_id else {}
+    cfg = {"configurable": {"thread_id": effective_thread_id}}
     try:
         final_state = app_graph.invoke(initial_state, config=cfg)
         
