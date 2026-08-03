@@ -104,7 +104,7 @@ export function App() {
       }
     } catch (err: any) {
       console.error('Failed to load threads:', err);
-      setError('Unable to reach Main Agent API at http://192.168.1.176:8090. Make sure the service is running.');
+      setError('Unable to reach Main Agent API. Make sure the backend service is running.');
     } finally {
       setIsLoadingThreads(false);
     }
