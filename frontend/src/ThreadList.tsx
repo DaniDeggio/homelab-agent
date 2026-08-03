@@ -1,0 +1,133 @@
+import React, { useState } from 'react';
+import type { ThreadItem } from './api';
+import { MessageSquare, Plus, Search, RefreshCw, Cpu } from 'lucide-react';
+
+interface ThreadListProps {
+  threads: ThreadItem[];
+  currentThreadId: string | null;
+  onSelectThread: (threadId: string) => void;
+  onNewThread: () => void;
+  onRefresh: () => void;
+  isLoading: boolean;
+  isBackendHealthy: boolean | null;
+}
+
+export const ThreadList: React.FC<ThreadListProps> = ({
+  threads,
+  currentThreadId,
+  onSelectThread,
+  onNewThread,
+  onRefresh,
+  isLoading,
+  isBackendHealthy,
+}) => {
+  const [searchTerm, setSearchTerm] = useState('');
+
+  const filteredThreads = threads.filter(t => 
+    t.thread_id.toLowerCase().includes(searchTerm.toLowerCase()) ||
+    (t.last_message && t.last_message.toLowerCase().includes(searchTerm.toLowerCase()))
+  );
+
+  return (
+    <div className="w-80 bg-slate-900 border-r border-slate-800 flex flex-col h-full shrink-0">
+      {/* App Header */}
+      <div className="p-4 border-b border-slate-800 flex items-center justify-between">
+        <div className="flex items-center gap-2.5">
+          <div className="w-8 h-8 rounded-lg bg-blue-600/20 border border-blue-500/30 flex items-center justify-center text-blue-400">
+            <Cpu size={18} />
+          </div>
+          <div>
+            <h1 className="font-semibold text-sm text-slate-100 leading-tight">Main-Agent UI</h1>
+            <div className="flex items-center gap-1.5 mt-0.5">
+              <span className={`w-2 h-2 rounded-full ${isBackendHealthy === true ? 'bg-emerald-400 animate-pulse' : isBackendHealthy === false ? 'bg-rose-500' : 'bg-amber-400'}`}></span>
+              <span className="text-[11px] text-slate-400">
+                {isBackendHealthy === true ? 'API Connected' : isBackendHealthy === false ? 'API Offline' : 'Connecting...'}
+              </span>
+            </div>
+          </div>
+        </div>
+
+        <button
+          onClick={onRefresh}
+          disabled={isLoading}
+          className="p-1.5 text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded-md transition"
+          title="Refresh threads"
+        >
+          <RefreshCw size={15} className={isLoading ? 'animate-spin' : ''} />
+        </button>
+      </div>
+
+      {/* New Thread Action */}
+      <div className="p-3">
+        <button
+          onClick={onNewThread}
+          className="w-full py-2.5 px-3 bg-blue-600 hover:bg-blue-500 text-white rounded-lg font-medium text-xs flex items-center justify-center gap-2 shadow-lg shadow-blue-600/20 transition active:scale-[0.98]"
+        >
+          <Plus size={16} />
+          <span>New Thread</span>
+        </button>
+      </div>
+
+      {/* Search Input */}
+      <div className="px-3 pb-2">
+        <div className="relative">
+          <Search size={14} className="absolute left-2.5 top-2.5 text-slate-500" />
+          <input
+            type="text"
+            placeholder="Filter threads..."
+            value={searchTerm}
+            onChange={(e) => setSearchTerm(e.target.value)}
+            className="w-full bg-slate-950 border border-slate-800 rounded-md pl-8 pr-3 py-1.5 text-xs text-slate-200 placeholder-slate-500 focus:outline-none focus:border-blue-500 transition"
+          />
+        </div>
+      </div>
+
+      {/* Thread List */}
+      <div className="flex-1 overflow-y-auto px-2 py-1 space-y-1">
+        {filteredThreads.length === 0 ? (
+          <div className="p-4 text-center text-xs text-slate-500">
+            {searchTerm ? 'No matching threads found' : 'No active threads yet'}
+          </div>
+        ) : (
+          filteredThreads.map((thread) => {
+            const isSelected = thread.thread_id === currentThreadId;
+            return (
+              <button
+                key={thread.thread_id}
+                onClick={() => onSelectThread(thread.thread_id)}
+                className={`w-full text-left p-2.5 rounded-lg border transition flex flex-col gap-1 ${
+                  isSelected
+                    ? 'bg-slate-800/90 border-blue-500/40 text-slate-100 shadow-sm'
+                    : 'bg-slate-900/50 border-slate-800/60 text-slate-300 hover:bg-slate-800/50 hover:border-slate-700'
+                }`}
+              >
+                <div className="flex items-center justify-between gap-2">
+                  <div className="flex items-center gap-2 font-medium text-xs truncate">
+                    <MessageSquare size={14} className={isSelected ? 'text-blue-400' : 'text-slate-400'} />
+                    <span className="truncate">{thread.thread_id}</span>
+                  </div>
+                  {thread.checkpoint_count > 0 && (
+                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 font-mono">
+                      {thread.checkpoint_count}
+                    </span>
+                  )}
+                </div>
+                {thread.last_message && (
+                  <p className="text-[11px] text-slate-400 truncate pl-5">
+                    {thread.last_message}
+                  </p>
+                )}
+              </button>
+            );
+          })
+        )}
+      </div>
+
+      {/* Footer info */}
+      <div className="p-3 border-t border-slate-800 text-[11px] text-slate-500 flex items-center justify-between">
+        <span>Main-Agent v1.0</span>
+        <span className="font-mono text-[10px]">192.168.1.176:8090</span>
+      </div>
+    </div>
+  );
+};
