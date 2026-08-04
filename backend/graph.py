@@ -3,7 +3,7 @@ import json
 import sqlite3
 import logging
 import requests
-from typing import TypedDict, Optional, Dict, Any
+from typing import TypedDict, Optional, Dict, Any, List
 from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.sqlite import SqliteSaver
 from mcp_client import MetaMCPClient
