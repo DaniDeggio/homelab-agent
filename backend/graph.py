@@ -2,7 +2,9 @@ import re
 import json
 import sqlite3
 import logging
+import os
 import requests
+from datetime import datetime
 from typing import TypedDict, Optional, Dict, Any, List
 from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.sqlite import SqliteSaver
@@ -30,6 +32,69 @@ class AgentState(TypedDict):
 client = MetaMCPClient(base_url=config.METAMCP_URL, api_key=config.METAMCP_API_KEY)
 conn = sqlite3.connect(config.CHECKPOINT_DB_PATH, check_same_thread=False)
 memory = SqliteSaver(conn)
+
+MEMORY_DIR = "/opt/homelab-agent/memory" if os.path.exists("/opt/homelab-agent") else os.path.join(os.path.dirname(os.path.abspath(__file__)), "memory")
+
+def _append_message_to_file(thread_id: str, role: str, content: str):
+    """Scrivi un messaggio su file JSONL (append-only) per audit e disaster recovery."""
+    if not thread_id or not content:
+        return
+    try:
+        os.makedirs(MEMORY_DIR, exist_ok=True)
+        filepath = os.path.join(MEMORY_DIR, f"{thread_id}.jsonl")
+        entry = {
+            "timestamp": datetime.utcnow().isoformat(),
+            "role": role,
+            "content": content
+        }
+        with open(filepath, "a", encoding="utf-8") as f:
+            f.write(json.dumps(entry, ensure_ascii=False) + "\n")
+        logger.info(f"Messaggio ({role}) salvato su file di memoria: {filepath}")
+    except Exception as e:
+        logger.warning(f"Errore scrittura memoria file system {thread_id}: {e}")
+
+def _read_messages_from_file(thread_id: str) -> List[Dict[str, Any]]:
+    """Legge i messaggi storici dal file JSONL locale in caso di assenza o fallback di Letta."""
+    if not thread_id:
+        return []
+    filepath = os.path.join(MEMORY_DIR, f"{thread_id}.jsonl")
+    if not os.path.exists(filepath):
+        return []
+    messages = []
+    try:
+        with open(filepath, "r", encoding="utf-8") as f:
+            for line in f:
+                line = line.strip()
+                if line:
+                    try:
+                        data = json.loads(line)
+                        role_type = "user_message" if data.get("role") == "user" else "assistant_message"
+                        messages.append({
+                            "message_type": role_type,
+                            "content": data.get("content", ""),
+                            "timestamp": data.get("timestamp")
+                        })
+                    except Exception:
+                        pass
+    except Exception as e:
+        logger.warning(f"Errore lettura file memoria {filepath}: {e}")
+    return messages
+
+def _generate_summary(messages: List[Dict[str, Any]]) -> str:
+    """Genera un riassunto di una lista di messaggi mediante LLM."""
+    text = "\n".join([f"{'User' if 'user' in str(m.get('message_type','')).lower() else 'Assistant'}: {m.get('content', '')}" for m in messages])
+    prompt = f"""Riassumi la seguente conversazione in massimo 5 frasi, mantenendo:
+- Nomi delle persone (es. "Alice")
+- Preferenze espresse (es. "preferisce Debian")
+- Decisioni prese (es. "ha creato servizio web")
+- Domande aperte o task in corso
+
+Conversazione:
+{text}
+
+Riassunto:"""
+    summary = _call_llm(prompt, system_prompt="Sei un assistente che riassume conversazioni in modo conciso.", max_tokens=512, temperature=0.3)
+    return summary.strip() if summary else ""
 
 def _call_llm(prompt: str, system_prompt: str = None, max_tokens: int = 600, temperature: float = 0.3) -> str:
     url = f"{config.LLAMA_CPP_URL.rstrip('/')}/chat/completions"
@@ -93,32 +158,77 @@ def _format_metamcp_tools_catalog() -> str:
     return "\n".join(lines)
 
 def intake_node(state: AgentState) -> AgentState:
-    """Receives the task and settings."""
+    """Receives the task and settings, and appends user message to JSONL file memory."""
+    thread_id = state.get("thread_id")
+    task = state.get("task", "")
+    if thread_id and task:
+        _append_message_to_file(thread_id, "user", task)
     return state
 
 def retrieve_memory_node(state: AgentState) -> AgentState:
-    """Retrieves relevant memory context from Letta if thread_id is provided."""
+    """Retrieves relevant memory context combining sliding window + incremental summary."""
     thread_id = state.get("thread_id")
     if not thread_id:
         return {"memory_context": None, "agent_id": None}
 
     agent_id = letta_client.create_thread(thread_id)
-    if not agent_id:
-        return {"memory_context": None, "agent_id": None}
+    raw_messages = letta_client.get_messages(agent_id) if agent_id else []
+    clean_messages = letta_client.filter_clean_messages(raw_messages) if raw_messages else []
 
-    raw_messages = letta_client.get_messages(agent_id)
-    clean_messages = letta_client.filter_clean_messages(raw_messages)
-    
-    memory_lines = []
-    if clean_messages:
-        for msg in clean_messages:
-            m_type = msg.get("message_type", "")
+    # Fallback su file JSONL se Letta è offline o non ha messaggi
+    if not clean_messages:
+        clean_messages = _read_messages_from_file(thread_id)
+
+    summary = ""
+    recent_messages = []
+
+    if len(clean_messages) > 30:
+        summary_key = f"summary_1_30_{thread_id}"
+        summary_file = os.path.join(MEMORY_DIR, f"summary_{thread_id}.txt")
+
+        if agent_id:
+            summary = letta_client.get_archival_memory(agent_id, key=summary_key)
+
+        if not summary and os.path.exists(summary_file):
+            try:
+                with open(summary_file, "r", encoding="utf-8") as sf:
+                    summary = sf.read().strip()
+            except Exception:
+                pass
+
+        if not summary:
+            old_messages = clean_messages[:-20]
+            logger.info(f"Generazione summary incrementale per thread '{thread_id}' su {len(old_messages)} vecchi messaggi...")
+            summary = _generate_summary(old_messages)
+            if summary:
+                if agent_id:
+                    letta_client.save_archival_memory(agent_id, key=summary_key, value=summary)
+                try:
+                    os.makedirs(MEMORY_DIR, exist_ok=True)
+                    with open(summary_file, "w", encoding="utf-8") as sf:
+                        sf.write(summary)
+                except Exception as e:
+                    logger.warning(f"Errore salvataggio summary locale {summary_file}: {e}")
+        
+        recent_messages = clean_messages[-20:]
+    else:
+        recent_messages = clean_messages
+
+    memory_parts = []
+    if summary:
+        memory_parts.append(f"### Riepilogo conversazione precedente:\n{summary}")
+
+    if recent_messages:
+        memory_parts.append("### Messaggi recenti:")
+        for msg in recent_messages:
+            m_type = str(msg.get("message_type", "")).lower()
             role_label = "User" if "user" in m_type else "Assistant"
             txt = msg.get("content", "")
             if txt:
-                memory_lines.append(f"{role_label}: {txt}")
-    
-    memory_context = "\n".join(memory_lines) if memory_lines else ""
+                memory_parts.append(f"{role_label}: {txt}")
+
+    memory_context = "\n\n".join(memory_parts) if memory_parts else ""
+    logger.info(f"Retrieval memoria per thread '{thread_id}': total_messages={len(clean_messages)}, has_summary={bool(summary)}, recent_window={len(recent_messages)}")
     return {"memory_context": memory_context, "agent_id": agent_id}
 
 def mode_router_node(state: AgentState) -> AgentState:
@@ -674,8 +784,12 @@ def _format_tool_result(tool_name: str, result: Any) -> str:
 
 
 def respond_node(state: AgentState) -> AgentState:
-    """Formats final response if not already set."""
+    """Formats final response if not already set and appends assistant message to file system memory."""
+    thread_id = state.get("thread_id")
     if state.get("final_response"):
+        resp = state.get("final_response")
+        if thread_id and resp:
+            _append_message_to_file(thread_id, "assistant", resp)
         return state
 
     plan = state.get("plan", {})
@@ -689,7 +803,10 @@ def respond_node(state: AgentState) -> AgentState:
     else:
         direct_ans = plan.get("direct_answer", "")
         formatted = f"[Mode: {mode.upper()}]\n{direct_ans}"
-        
+
+    if thread_id and formatted:
+        _append_message_to_file(thread_id, "assistant", formatted)
+
     return {"final_response": formatted}
 
 def commit_memory_node(state: AgentState) -> AgentState:

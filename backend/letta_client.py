@@ -1,5 +1,6 @@
 import logging
 import httpx
+from typing import Optional, List, Dict, Any
 import config
 
 logging.basicConfig(level=logging.INFO)
@@ -93,6 +94,26 @@ def save_memory(agent_id: str, content: str) -> bool:
     except Exception as e:
         logger.warning(f"save_memory failed: {e}")
     return False
+
+def save_archival_memory(agent_id: str, key: str, value: str) -> bool:
+    """Saves a key-value pair into Letta's archival memory."""
+    if not agent_id or not key or not value:
+        return False
+    content = f"[{key}] {value}"
+    return save_memory(agent_id, content)
+
+def get_archival_memory(agent_id: str, key: str) -> Optional[str]:
+    """Retrieves a key-value pair from Letta's archival memory passages."""
+    if not agent_id or not key:
+        return None
+    passages = get_messages(agent_id, limit=100)
+    tag = f"[{key}]"
+    for item in passages:
+        if isinstance(item, dict):
+            txt = item.get("text") or item.get("content") or ""
+            if tag in txt:
+                return txt.replace(tag, "").strip()
+    return None
 
 def send_message(agent_id: str, role: str, content: str) -> dict:
     """
