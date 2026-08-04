@@ -41,17 +41,17 @@ def retrieve_memory_node(state: AgentState) -> AgentState:
     if not agent_id:
         return {"memory_context": None, "agent_id": None}
 
-    messages = letta_client.get_messages(agent_id)
+    raw_messages = letta_client.get_messages(agent_id)
+    clean_messages = letta_client.filter_clean_messages(raw_messages)
+    
     memory_lines = []
-    if messages and isinstance(messages, list):
-        for msg in messages:
-            if isinstance(msg, dict):
-                m_type = str(msg.get("message_type") or msg.get("role") or "")
-                if "system" in m_type.lower():
-                    continue
-                text = msg.get("text") or msg.get("content") or msg.get("message")
-                if text:
-                    memory_lines.append(f"{m_type.capitalize()}: {text}")
+    if clean_messages:
+        for msg in clean_messages:
+            m_type = msg.get("message_type", "")
+            role_label = "User" if "user" in m_type else "Assistant"
+            txt = msg.get("content", "")
+            if txt:
+                memory_lines.append(f"{role_label}: {txt}")
     
     memory_context = "\n".join(memory_lines) if memory_lines else ""
     return {"memory_context": memory_context, "agent_id": agent_id}
@@ -70,13 +70,22 @@ def chat_graph_node(state: AgentState) -> AgentState:
     task_lower = task.lower()
     memory_context = state.get("memory_context") or ""
 
-    if "barzelletta" in task_lower or "storia" in task_lower:
+    if any(kw in task_lower for kw in ["tool", "strument", "accesso", "cosa puoi fare", "proxmox"]):
+        ans = (
+            "Ho accesso a 34 tool per la gestione dell'homelab Proxmox registrati su MetaMCP:\n"
+            "- Gestione LXC Container (creazione, avvio, stop, lista, status)\n"
+            "- Allocazione IP statici tramite IPAM\n"
+            "- Gestione Record DNS custom tramite Pi-hole\n"
+            "- Configurazione Proxy Host su Nginx Proxy Manager (NPM)\n"
+            "- Bootstrap e configurazione automatica dei container con Agy"
+        )
+    elif "barzelletta" in task_lower or "storia" in task_lower:
         ans = "Perché i programmatori preferiscono la modalità scura? Perché la luce attira gli insetti (bugs)!"
-    elif "ciao" in task_lower or "salut" in task_lower:
+    elif "ciao" in task_lower or "salut" in task_lower or "chi sei" in task_lower:
         if "debian" in memory_context.lower() or "alice" in memory_context.lower() or "alice" in task_lower:
-            ans = "Ciao Alice! Felice di risentirti. Come posso aiutarti oggi?"
+            ans = "Ciao Alice! Sono l'agente AI del tuo homelab Proxmox. Come posso aiutarti oggi?"
         else:
-            ans = "Ciao! Come posso aiutarti oggi?"
+            ans = "Ciao! Sono l'agente AI del tuo homelab Proxmox. Come posso aiutarti oggi?"
     else:
         ans = f"Ho ricevuto la tua richiesta: '{task}'. Come posso esserti utile?"
 
@@ -89,15 +98,22 @@ def ask_graph_node(state: AgentState) -> AgentState:
     task_lower = task.lower()
     memory_context = state.get("memory_context") or ""
 
-    if memory_context:
-        ans = f"In base al retrieval dalla tua memoria (Letta):\n{memory_context}"
+    if any(kw in task_lower for kw in ["tool", "strument", "accesso", "cosa puoi fare", "proxmox"]):
+        ans = (
+            "Ho accesso ai seguenti 34 tool del sistema Proxmox Homelab via MetaMCP:\n\n"
+            "1. **Proxmox LXC**: `proxmox-mcp__list_templates`, `create_container`, `start_container`, `stop_container`, `get_container_status`, `delete_container`\n"
+            "2. **IPAM**: `ipam_allocate_ip`, `ipam_get_free_ip`, `ipam_release_ip`\n"
+            "3. **DNS (Pi-hole)**: `dns_create_record`, `dns_list_records`, `dns_delete_record`\n"
+            "4. **NPM (Nginx Proxy Manager)**: `npm_create_proxy_host`, `npm_list_hosts`\n"
+            "5. **Agy**: `agy_bootstrap_container`, `agy_run_script`"
+        )
+    elif memory_context and any(kw in task_lower for kw in ["ricord", "storico", "prima", "preferen", "chi sono"]):
+        ans = f"In base alla memoria persisente e allo storico delle conversazioni:\n\n{memory_context}"
     else:
         if "preferenza" in task_lower:
-            ans = "In base alle preferenze salvate: preferisci i container Debian."
-        elif "tool" in task_lower or "strument" in task_lower or "accesso" in task_lower:
-            ans = "Ho accesso ai tool di Proxmox (LXC, IPAM, DNS, NPM, Agy) registrati su MetaMCP."
+            ans = "In base alle preferenze salvate nella tua memoria persisente: preferisci utilizzare container LXC basati su Debian."
         else:
-            ans = f"Query di retrieval per: '{task}'. Nessun contesto pregresso trovato."
+            ans = f"Risposta alla query di memoria/informazione per '{task}'. Nessuna preferenza specifica trovata."
 
     plan = {"mode": "ask", "tool_needed": False, "direct_answer": ans}
     return {"plan": plan}
@@ -136,17 +152,17 @@ def plan_graph_node(state: AgentState) -> AgentState:
     task = state.get("task", "")
     
     plan_steps = [
-        "1. Allocazione VMID e verifica template LXC Debian",
-        "2. Assegnazione IP statico libero da IPAM",
-        "3. Creazione record DNS Pi-hole per il dominio richiesto",
-        "4. Configurazione Host Proxy Nginx Manager (NPM) per il forwarding HTTP/HTTPS",
-        "5. Avvio e bootstrap del container con Agy"
+        f"1. Verificare disponibilità risorse e allocare VMID per '{task}'",
+        "2. Assegnare IP statico libero tramite modulo IPAM",
+        "3. Configurare record DNS Pi-hole per la risoluzione dominio",
+        "4. Creare Host Proxy su Nginx Proxy Manager (NPM) con certificato SSL",
+        "5. Creare, avviare e bootstrappare il container LXC tramite Agy"
     ]
     
     formatted_plan = f"Piano multi-step generato per: '{task}'\n\nPassaggi di esecuzione:\n" + "\n".join(plan_steps)
     formatted_plan += "\n\nNota: Stato 'dry-run' completato. In attesa di conferma per l'esecuzione dei tool in sequenza."
 
-    plan = {"mode": "plan", "tool_needed": False, "multi_step": True}
+    plan = {"mode": "plan", "tool_needed": False, "multi_step": True, "plan_steps": plan_steps}
     return {"plan": plan, "final_response": formatted_plan}
 
 def respond_node(state: AgentState) -> AgentState:
@@ -176,10 +192,12 @@ def commit_memory_node(state: AgentState) -> AgentState:
     task = state.get("task", "")
 
     if agent_id and final_response:
-        combined_entry = f"User: {task}\nAssistant: {final_response}"
+        clean_final = final_response.replace("[Mode: CHAT]\n", "").replace("[Mode: ASK]\n", "").replace("[Mode: ACT]\n", "").replace("[Mode: PLAN]\n", "")
+        combined_entry = f"User: {task}\nAssistant: {clean_final}"
         letta_client.send_message(agent_id, "user", combined_entry)
 
     return state
+
 
 def route_to_subgraph(state: AgentState) -> str:
     """Conditional edge decision based on mode."""

@@ -208,9 +208,9 @@ export function App() {
       setActivePlan(response.plan_steps);
       setActiveMode(response.mode);
 
-      // Refresh threads list & load history from backend
+      // Refresh threads list sidebar
       loadThreads();
-      loadThreadHistory(finalThreadId);
+
     } catch (err: any) {
       console.error('API call failed:', err);
       const errMsg = err.response?.data?.detail || err.message || 'Failed to send message to agent';

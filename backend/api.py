@@ -143,13 +143,15 @@ async def get_thread(thread_id: str):
         conn.close()
         
         agent_id = letta_client.create_thread(thread_id)
-        letta_messages = letta_client.get_messages(agent_id) if agent_id else []
+        raw_messages = letta_client.get_messages(agent_id) if agent_id else []
+        clean_messages = letta_client.filter_clean_messages(raw_messages)
         
         return {
             "thread_id": thread_id,
             "agent_id": agent_id,
             "checkpoint_count": count,
-            "letta_messages": letta_messages
+            "letta_messages": clean_messages
         }
+
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to get thread details: {str(e)}")

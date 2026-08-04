@@ -125,3 +125,63 @@ def get_messages(agent_id: str, limit: int = 50) -> list:
                 logger.warning(f"Attempt {attempt+1} get_messages failed: {e}")
 
     return None
+
+def filter_clean_messages(messages: list) -> list:
+    """
+    Filters raw Letta messages to return only clean user and main-agent conversation turns,
+    excluding Letta internal agent responses, reasoning, and system messages.
+    """
+    if not messages or not isinstance(messages, list):
+        return []
+
+    clean_msgs = []
+    for msg in messages:
+        if not isinstance(msg, dict):
+            continue
+        
+        m_type = str(msg.get("message_type") or msg.get("role") or "").lower()
+        if "system" in m_type or "reasoning" in m_type or "tool" in m_type:
+            continue
+            
+        # Ignore assistant messages generated internally by Letta's agent
+        if m_type == "assistant_message" or m_type == "assistant":
+            continue
+
+        if m_type == "user_message" or m_type == "user":
+            txt = msg.get("text") or msg.get("content") or msg.get("message") or ""
+            if not txt:
+                continue
+                
+            msg_id = msg.get("id") or "msg"
+            date_val = msg.get("date") or msg.get("created_at")
+            
+            # Check if this user_message was committed as "User: ... \nAssistant: ..."
+            if "User: " in txt and "Assistant: " in txt:
+                parts = txt.split("Assistant: ", 1)
+                user_part = parts[0].replace("User: ", "").strip()
+                ast_part = parts[1].strip() if len(parts) > 1 else ""
+                
+                if user_part:
+                    clean_msgs.append({
+                        "id": f"{msg_id}_u",
+                        "date": date_val,
+                        "message_type": "user_message",
+                        "content": user_part
+                    })
+                if ast_part:
+                    clean_msgs.append({
+                        "id": f"{msg_id}_a",
+                        "date": date_val,
+                        "message_type": "assistant_message",
+                        "content": ast_part
+                    })
+            else:
+                clean_msgs.append({
+                    "id": msg_id,
+                    "date": date_val,
+                    "message_type": "user_message",
+                    "content": txt
+                })
+
+    return clean_msgs
+

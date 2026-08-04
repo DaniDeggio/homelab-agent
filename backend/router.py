@@ -52,14 +52,17 @@ Rispondi SOLO con una parola: chat, ask, act, o plan."""
         logger.warning(f"Neural router call skipped ({e}). Using rule-based fallback.")
 
     input_lower = user_input.lower()
-    if any(kw in input_lower for kw in ["crea", "migra", "prepara", "sequenza", "completo", "nuovo servizio"]):
+    if any(kw in input_lower for kw in ["ciao", "salut", "chi sei", "buongiorno", "buonasera", "barzelletta"]):
+        fallback = "chat"
+    elif any(kw in input_lower for kw in ["crea", "migra", "prepara", "sequenza", "completo", "nuovo servizio"]):
         fallback = "plan"
     elif any(kw in input_lower for kw in ["lista", "stato", "avvia", "ferma", "riavvia", "list", "get", "status"]):
         fallback = "act"
-    elif any(kw in input_lower for kw in ["qual", "cosa", "chi", "preferenza", "ricord", "ultima volta", "storico"]):
+    elif any(kw in input_lower for kw in ["qual", "cosa", "preferenza", "ricord", "ultima volta", "storico", "tool", "strument", "accesso"]):
         fallback = "ask"
     else:
         fallback = "chat"
+
 
     logger.info(f"Rule router classified mode={fallback} for input='{user_input}'")
     return fallback
