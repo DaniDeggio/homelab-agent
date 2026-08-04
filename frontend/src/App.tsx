@@ -68,26 +68,26 @@ export function App() {
         ? new Date(m.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
         : '';
 
-      const content = m.content || '';
+      let rawContent = m.content || '';
 
       // Extract mode from message content if formatted as [Mode: CHAT/ASK/ACT/PLAN]
       let mode: string | undefined = undefined;
-      const modeMatch = content.match(/\[Mode:\s*([A-Za-z]+)\]/);
+      const modeMatch = rawContent.match(/\[Mode:\s*([A-Za-z]+)\]/i);
       if (modeMatch) {
         mode = modeMatch[1].toLowerCase();
       }
 
       // Extract tool_used
       let tool_used: string | undefined = m.tool_name;
-      const toolMatch = content.match(/Tool utilizzato:\s*([^\n]+)/);
+      const toolMatch = rawContent.match(/Tool utilizzato:\s*([^\n]+)/i);
       if (toolMatch) {
-        tool_used = toolMatch[1].trim();
+        tool_used = toolMatch[1].trim().replace(/`/g, '');
       }
 
       // Extract plan_steps
       let plan_steps: string[] | undefined = undefined;
-      if (content.includes('Passaggi di esecuzione:')) {
-        const planSection = content.split('Passaggi di esecuzione:')[1];
+      if (rawContent.includes('Passaggi di esecuzione:')) {
+        const planSection = rawContent.split('Passaggi di esecuzione:')[1];
         if (planSection) {
           const lines = planSection
             .split('\n')
@@ -98,6 +98,8 @@ export function App() {
           }
         }
       }
+
+      const content = rawContent.replace(/\[Mode:\s*[A-Za-z]+\]\n?/i, '').trim();
 
       chatMsgs.push({
         id: m.id || `msg_${idx}`,
@@ -295,7 +297,7 @@ export function App() {
       const assistantMsg: MessageItem = {
         id: `ast_${Date.now()}`,
         sender: 'assistant',
-        content: response.response || '(No content returned)',
+        content: (response.response || '(No content returned)').replace(/\[Mode:\s*[A-Za-z]+\]\n?/i, '').trim(),
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         mode: response.mode,
         tool_used: response.tool_used,

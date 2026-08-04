@@ -39,10 +39,11 @@ def _call_llm(prompt: str, system_prompt: str = None, max_tokens: int = 600, tem
         "model": config.DEFAULT_MODEL,
         "messages": messages,
         "max_tokens": max_tokens,
-        "temperature": temperature
+        "temperature": temperature,
+        "chat_template_kwargs": {"enable_thinking": False}
     }
     try:
-        res = requests.post(url, json=payload, timeout=8)
+        res = requests.post(url, json=payload, timeout=25)
         if res.status_code == 200:
             msg_obj = res.json()["choices"][0]["message"]
             content = msg_obj.get("content")
@@ -283,6 +284,71 @@ def plan_graph_node(state: AgentState) -> AgentState:
     plan = {"mode": "plan", "tool_needed": False, "multi_step": True, "plan_steps": plan_steps}
     return {"plan": plan, "final_response": formatted_plan}
 
+def _format_tool_result(tool_name: str, result: Any) -> str:
+    if isinstance(result, dict) and "error" in result:
+        return f"❌ **Errore nell'esecuzione del tool `{tool_name}`**:\n```\n{result['error']}\n```"
+
+    raw_data = result
+    if isinstance(result, dict) and "content" in result and isinstance(result["content"], list):
+        text_parts = []
+        for item in result["content"]:
+            if isinstance(item, dict) and item.get("type") == "text":
+                text_parts.append(item.get("text", ""))
+        if text_parts:
+            raw_text = "\n".join(text_parts)
+            try:
+                raw_data = json.loads(raw_text)
+            except Exception:
+                raw_data = raw_text
+
+    if isinstance(raw_data, str):
+        try:
+            raw_data = json.loads(raw_data)
+        except Exception:
+            pass
+
+    if "list_containers" in str(tool_name) and isinstance(raw_data, list):
+        lines = [
+            f"**Esito elaborazione tool**: `{tool_name}`\n",
+            "Ecco l'elenco dei container LXC rilevati sul server Proxmox:\n",
+            "| VMID | Nome | Stato | CPU (Cores) | RAM Allocata | Tipo |",
+            "| :--- | :--- | :---: | :---: | :---: | :---: |"
+        ]
+        for c in sorted(raw_data, key=lambda x: int(x.get("vmid", 0)) if str(x.get("vmid", "0")).isdigit() else 0):
+            vmid = c.get("vmid", "N/A")
+            name = c.get("name", "Unnamed")
+            status = str(c.get("status", "")).lower()
+            status_icon = "🟢 `running`" if status == "running" else ("🔴 `stopped`" if status == "stopped" else f"`{status}`")
+            cpus = c.get("cpus", "-")
+            maxmem = c.get("maxmem", 0)
+            mem_mb = int(maxmem / (1024 * 1024)) if isinstance(maxmem, (int, float)) and maxmem > 0 else "-"
+            c_type = c.get("type", "lxc")
+            lines.append(f"| **{vmid}** | {name} | {status_icon} | {cpus} | {mem_mb} MB | {c_type} |")
+        return "\n".join(lines)
+
+    if "list_templates" in str(tool_name) and isinstance(raw_data, list):
+        lines = [
+            f"**Esito elaborazione tool**: `{tool_name}`\n",
+            "Ecco i template di servizio disponibili:\n"
+        ]
+        for t in raw_data:
+            if isinstance(t, dict):
+                key = t.get("key", "")
+                desc = t.get("description", "")
+                vmid = t.get("source_vmid", "")
+                tags = ", ".join(t.get("tags", [])) if isinstance(t.get("tags"), list) else str(t.get("tags", ""))
+                lines.append(f"- **{key}** (VMID `{vmid}`): {desc} *(Tags: {tags})*")
+            else:
+                lines.append(f"- {t}")
+        return "\n".join(lines)
+
+    if isinstance(raw_data, (dict, list)):
+        pretty = json.dumps(raw_data, indent=2, ensure_ascii=False)
+        return f"**Esito elaborazione tool**: `{tool_name}`\n\n```json\n{pretty}\n```"
+
+    return f"**Esito elaborazione tool**: `{tool_name}`\n\n{raw_data}"
+
+
 def respond_node(state: AgentState) -> AgentState:
     """Formats final response if not already set."""
     if state.get("final_response"):
@@ -294,9 +360,8 @@ def respond_node(state: AgentState) -> AgentState:
     if plan.get("tool_needed"):
         tool_name = plan.get("tool_name")
         result = state.get("tool_result")
-        formatted = f"[Mode: {mode.upper()}]\nTask: {state['task']}\n"
-        formatted += f"Tool utilizzato: {tool_name}\n"
-        formatted += f"Risultato:\n{json.dumps(result, indent=2, ensure_ascii=False) if isinstance(result, (dict, list)) else result}"
+        formatted_result = _format_tool_result(str(tool_name), result)
+        formatted = f"[Mode: {mode.upper()}]\n{formatted_result}"
     else:
         direct_ans = plan.get("direct_answer", "")
         formatted = f"[Mode: {mode.upper()}]\n{direct_ans}"
@@ -310,8 +375,7 @@ def commit_memory_node(state: AgentState) -> AgentState:
     task = state.get("task", "")
 
     if agent_id and final_response:
-        clean_final = final_response.replace("[Mode: CHAT]\n", "").replace("[Mode: ASK]\n", "").replace("[Mode: ACT]\n", "").replace("[Mode: PLAN]\n", "")
-        combined_entry = f"User: {task}\nAssistant: {clean_final}"
+        combined_entry = f"User: {task}\nAssistant: {final_response}"
         letta_client.send_message(agent_id, "user", combined_entry)
 
     return state

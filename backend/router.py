@@ -49,16 +49,17 @@ Input: "{user_input}"
 
 Risposta (solo chat, ask, act o plan):"""
 
-    url = f"{LLAMA_CPP_URL}/chat/completions"
+    url = f"{LLAMA_CPP_URL.rstrip('/')}/chat/completions"
     payload = {
         "model": DEFAULT_MODEL,
         "messages": [{"role": "user", "content": prompt}],
-        "max_tokens": 512,
-        "temperature": 0.0
+        "max_tokens": 64,
+        "temperature": 0.0,
+        "chat_template_kwargs": {"enable_thinking": False}
     }
 
     try:
-        res = requests.post(url, json=payload, timeout=5)
+        res = requests.post(url, json=payload, timeout=10)
         if res.status_code == 200:
             msg_obj = res.json()["choices"][0]["message"]
             content = (msg_obj.get("content") or msg_obj.get("reasoning_content") or "").strip().lower()
