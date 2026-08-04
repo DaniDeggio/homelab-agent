@@ -56,15 +56,7 @@ def run_agent_flow(task: str, thread_id: Optional[str], force_mode: Optional[str
         plan_dict = final_state.get("plan", {})
         tool_used = plan_dict.get("tool_name") if isinstance(plan_dict, dict) else None
         
-        plan_steps = None
-        if mode == "plan":
-            plan_steps = [
-                "1. Allocazione VMID e verifica template LXC Debian",
-                "2. Assegnazione IP statico libero da IPAM",
-                "3. Creazione record DNS Pi-hole per il dominio richiesto",
-                "4. Configurazione Host Proxy Nginx Manager (NPM) per il forwarding HTTP/HTTPS",
-                "5. Avvio e bootstrap del container con Agy"
-            ]
+        plan_steps = plan_dict.get("plan_steps") if isinstance(plan_dict, dict) else None
             
         return ChatResponse(
             thread_id=thread_id,

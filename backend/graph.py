@@ -1,3 +1,4 @@
+import re
 import json
 import sqlite3
 import logging
@@ -252,33 +253,36 @@ def plan_graph_node(state: AgentState) -> AgentState:
         for line in llm_plan.split("\n"):
             line = line.strip()
             if line and (line[0].isdigit() or line.startswith("-") or line.startswith("*")):
-                plan_steps.append(line)
+                cleaned = re.sub(r'^\d+[\.\)]\s*|^[-*]\s*', '', line).strip()
+                if cleaned:
+                    plan_steps.append(cleaned)
 
     if not plan_steps:
         task_lower = task.lower()
         if any(kw in task_lower for kw in ["migra", "storage", "sposta"]):
             plan_steps = [
-                f"1. Controllo stato del container e del nuovo target storage per '{task}'",
-                "2. Creazione snapshot di sicurezza su LVM/ZFS",
-                "3. Esecuzione migrazione disco verso il nuovo storage",
-                "4. Verifica avvio e integrità servizi sul container migrato"
+                f"Controllo stato del container e del nuovo target storage per '{task}'",
+                "Creazione snapshot di sicurezza su LVM/ZFS",
+                "Esecuzione migrazione disco verso il nuovo storage",
+                "Verifica avvio e integrità servizi sul container migrato"
             ]
-        elif any(kw in task_lower for kw in ["lista", "ispeziona", "controlla"]):
+        elif any(kw in task_lower for kw in ["lista", "ispeziona", "controlla", "container"]):
             plan_steps = [
-                f"1. Acquisizione inventario e stato real-time dei container per '{task}'",
-                "2. Verifica delle risorse allocate (CPU, RAM, Disco)",
-                "3. Generazione del report diagnostico completo per l'utente"
+                f"Acquisizione inventario e stato real-time dei container per '{task}'",
+                "Verifica delle risorse allocate (CPU, RAM, Disco)",
+                "Generazione del report diagnostico completo per l'utente"
             ]
         else:
             plan_steps = [
-                f"1. Verificare disponibilità risorse e allocare VMID per '{task}'",
-                "2. Assegnare IP statico libero tramite modulo IPAM",
-                "3. Configurare record DNS Pi-hole per la risoluzione dominio",
-                "4. Creare Host Proxy su Nginx Proxy Manager (NPM) con certificato SSL",
-                "5. Creare, avviare e bootstrappare il container LXC tramite Agy"
+                f"Verificare disponibilità risorse e allocare VMID per '{task}'",
+                "Assegnare IP statico libero tramite modulo IPAM",
+                "Configurare record DNS Pi-hole per la risoluzione dominio",
+                "Creare Host Proxy su Nginx Proxy Manager (NPM) con certificato SSL",
+                "Creare, avviare e bootstrappare il container LXC tramite Agy"
             ]
 
-    formatted_plan = f"Piano multi-step generato per: '{task}'\n\nPassaggi di esecuzione:\n" + "\n".join(plan_steps)
+    formatted_steps_str = "\n".join(f"{i+1}. {step}" for i, step in enumerate(plan_steps))
+    formatted_plan = f"Piano multi-step generato per: '{task}'\n\nPassaggi di esecuzione:\n{formatted_steps_str}"
     formatted_plan += "\n\nNota: Stato 'dry-run' completato. In attesa di conferma per l'esecuzione dei tool in sequenza."
 
     plan = {"mode": "plan", "tool_needed": False, "multi_step": True, "plan_steps": plan_steps}

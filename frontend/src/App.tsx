@@ -301,7 +301,7 @@ export function App() {
         timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
         mode: response.mode,
         tool_used: response.tool_used,
-        plan_steps: response.plan_steps,
+        plan_steps: response.plan_steps?.map((s) => s.replace(/^\d+[\.\)]\s*/, '').trim()),
       };
 
       const finalThreadId = response.thread_id || targetThreadId;

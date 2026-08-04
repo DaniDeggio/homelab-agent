@@ -1,5 +1,6 @@
 import sys
 import os
+import re
 import json
 import logging
 
@@ -78,6 +79,15 @@ def main():
     res4 = run_test("Test 4: Plan multi-step", "Crea un nuovo servizio web con IP libero e DNS custom", test_thread, force_mode="plan")
     assert res4["mode"] == "plan", f"Expected mode 'plan', got '{res4['mode']}'"
     assert "Piano multi-step" in res4["response"], "Plan step response missing title!"
+    plan_steps4 = res4["plan"].get("plan_steps", [])
+    for step in plan_steps4:
+        assert not re.match(r'^\d+[\.\)]', step), f"Step should not contain number prefix, got '{step}'"
+
+    # Test 4b: Plan Mode for inspection (Verify non-hardcoded steps)
+    res4b = run_test("Test 4b: Plan inspection", "Lista i container presenti nel mio sistema", test_thread, force_mode="plan")
+    assert res4b["mode"] == "plan"
+    plan_steps4b = res4b["plan"].get("plan_steps", [])
+    assert any("inventario" in s.lower() or "container" in s.lower() for s in plan_steps4b), "Plan for container list should be contextual!"
 
     # Test 5: Consistency test (Repeat Test 1 and 2 three times)
     print("\n--- TEST 5: Consistency Test (3 Iterations) ---")
