@@ -72,118 +72,118 @@ def create_thread(name: str, memory_blocks: list = None) -> str:
 
     return None
 
-def send_message(agent_id: str, role: str, content: str) -> dict:
+def save_memory(agent_id: str, content: str) -> bool:
     """
-    Sends a message to a Letta agent/thread.
-    Tries synchronous endpoint first, falls back to async endpoint on timeout.
-    Returns response dict or None if request fails.
+    Saves a conversation turn into Letta's archival memory.
+    This is an instant vector/passage insertion that DOES NOT trigger
+    an agent LLM inference turn on the Letta server.
     """
     if not agent_id or not LETTA_URL:
-        return None
+        return False
 
-    payload = {
-        "messages": [
-            {
-                "role": role,
-                "content": content
-            }
-        ]
-    }
+    payload = {"text": content}
+    try:
+        with httpx.Client(follow_redirects=True) as client:
+            r = client.post(f"{LETTA_URL}/v1/agents/{agent_id}/archival-memory", headers=HEADERS, json=payload, timeout=DEFAULT_TIMEOUT)
+            if r.status_code in [200, 201]:
+                logger.info(f"Successfully saved archival memory turn for agent {agent_id}")
+                return True
+            else:
+                logger.warning(f"Letta save_memory status {r.status_code}: {r.text[:200]}")
+    except Exception as e:
+        logger.warning(f"save_memory failed: {e}")
+    return False
 
-    with httpx.Client(follow_redirects=True) as client:
-        # Try sync endpoint with timeout, then async endpoint
-        for endpoint in [f"{LETTA_URL}/v1/agents/{agent_id}/messages/async", f"{LETTA_URL}/v1/agents/{agent_id}/messages"]:
-            for attempt in range(2):
-                try:
-                    r = client.post(endpoint, headers=HEADERS, json=payload, timeout=DEFAULT_TIMEOUT)
-                    if r.status_code in [200, 201]:
-                        return r.json()
-                    else:
-                        logger.warning(f"Letta send_message ({endpoint}) status {r.status_code}: {r.text[:200]}")
-                except Exception as e:
-                    logger.warning(f"Attempt {attempt+1} send_message ({endpoint}) failed: {e}")
-
-    return None
+def send_message(agent_id: str, role: str, content: str) -> dict:
+    """
+    Saves message memory to Letta using fast archival insertion.
+    """
+    success = save_memory(agent_id, content)
+    return {"status": "ok"} if success else None
 
 def get_messages(agent_id: str, limit: int = 50) -> list:
     """
-    Retrieves message history from Letta agent/thread.
-    Returns list of messages or None if request fails.
+    Retrieves memory passages from Letta archival memory (or message log).
     """
     if not agent_id or not LETTA_URL:
-        return None
+        return []
 
     with httpx.Client(follow_redirects=True) as client:
-        for attempt in range(2):
-            try:
-                r = client.get(f"{LETTA_URL}/v1/agents/{agent_id}/messages?limit={limit}", headers=HEADERS, timeout=DEFAULT_TIMEOUT)
-                if r.status_code == 200:
-                    return r.json()
-                else:
-                    logger.warning(f"Letta get_messages status {r.status_code}: {r.text[:200]}")
-            except Exception as e:
-                logger.warning(f"Attempt {attempt+1} get_messages failed: {e}")
+        # Try archival memory passages first
+        try:
+            r = client.get(f"{LETTA_URL}/v1/agents/{agent_id}/archival-memory?limit={limit}", headers=HEADERS, timeout=DEFAULT_TIMEOUT)
+            if r.status_code == 200:
+                passages = r.json()
+                if passages and isinstance(passages, list):
+                    return passages
+        except Exception as e:
+            logger.warning(f"get_messages archival fetch failed: {e}")
 
-    return None
+        # Fallback to message history
+        try:
+            r = client.get(f"{LETTA_URL}/v1/agents/{agent_id}/messages?limit={limit}", headers=HEADERS, timeout=DEFAULT_TIMEOUT)
+            if r.status_code == 200:
+                return r.json()
+        except Exception as e:
+            logger.warning(f"get_messages fallback failed: {e}")
+
+    return []
 
 def filter_clean_messages(messages: list) -> list:
     """
-    Filters raw Letta messages to return only clean user and main-agent conversation turns,
-    excluding Letta internal agent responses, reasoning, and system messages.
+    Filters raw Letta messages or archival passages to return clean user and main-agent turns.
     """
     if not messages or not isinstance(messages, list):
         return []
 
     clean_msgs = []
-    for msg in messages:
-        if not isinstance(msg, dict):
+    for item in messages:
+        if not isinstance(item, dict):
             continue
         
-        m_type = str(msg.get("message_type") or msg.get("role") or "").lower()
+        txt = item.get("text") or item.get("content") or item.get("message") or ""
+        if not txt:
+            continue
+
+        msg_id = item.get("id") or "msg"
+        date_val = item.get("created_at") or item.get("date")
+
+        m_type = str(item.get("message_type") or item.get("role") or "").lower()
         if "system" in m_type or "reasoning" in m_type or "tool" in m_type:
             continue
-            
-        # Ignore assistant messages generated internally by Letta's agent
-        if m_type == "assistant_message" or m_type == "assistant":
+        if m_type in ["assistant_message", "assistant"] and "User: " not in txt:
             continue
 
-        if m_type == "user_message" or m_type == "user":
-            txt = msg.get("text") or msg.get("content") or msg.get("message") or ""
-            if not txt:
-                continue
-                
-            msg_id = msg.get("id") or "msg"
-            date_val = msg.get("date") or msg.get("created_at")
+        if "User: " in txt and "Assistant: " in txt:
+            parts = txt.split("Assistant: ", 1)
+            user_part = parts[0].replace("User: ", "").strip()
+            ast_part = parts[1].strip() if len(parts) > 1 else ""
             
-            # Check if this user_message was committed as "User: ... \nAssistant: ..."
-            if "User: " in txt and "Assistant: " in txt:
-                parts = txt.split("Assistant: ", 1)
-                user_part = parts[0].replace("User: ", "").strip()
-                ast_part = parts[1].strip() if len(parts) > 1 else ""
-                
-                if user_part:
-                    clean_msgs.append({
-                        "id": f"{msg_id}_u",
-                        "date": date_val,
-                        "message_type": "user_message",
-                        "content": user_part
-                    })
-                if ast_part:
-                    clean_msgs.append({
-                        "id": f"{msg_id}_a",
-                        "date": date_val,
-                        "message_type": "assistant_message",
-                        "content": ast_part
-                    })
-            else:
+            if user_part:
                 clean_msgs.append({
-                    "id": msg_id,
+                    "id": f"{msg_id}_u",
                     "date": date_val,
                     "message_type": "user_message",
-                    "content": txt
+                    "content": user_part
                 })
+            if ast_part:
+                clean_msgs.append({
+                    "id": f"{msg_id}_a",
+                    "date": date_val,
+                    "message_type": "assistant_message",
+                    "content": ast_part
+                })
+        else:
+            role = "user_message" if "user" in m_type or not m_type else "assistant_message"
+            clean_msgs.append({
+                "id": msg_id,
+                "date": date_val,
+                "message_type": role,
+                "content": txt
+            })
 
     return clean_msgs
+
 
 def delete_thread(agent_id: str) -> bool:
     """Deletes a Letta agent/thread by agent_id."""

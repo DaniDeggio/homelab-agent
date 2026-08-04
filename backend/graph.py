@@ -70,7 +70,9 @@ def chat_graph_node(state: AgentState) -> AgentState:
     task_lower = task.lower()
     memory_context = state.get("memory_context") or ""
 
-    if any(kw in task_lower for kw in ["tool", "strument", "accesso", "cosa puoi fare", "proxmox"]):
+    if any(kw in task_lower for kw in ["chi sei", "presentati", "chi sei tu"]):
+        ans = "Sono l'agente AI del tuo homelab Proxmox. Posso gestire i container LXC, allocare IP con IPAM, gestire i record DNS Pi-hole, configurare Nginx Proxy Manager (NPM) e bootstrappare servizi con Agy."
+    elif any(kw in task_lower for kw in ["tool", "strument", "accesso", "cosa puoi fare", "proxmox"]):
         ans = (
             "Ho accesso a 34 tool per la gestione dell'homelab Proxmox registrati su MetaMCP:\n"
             "- Gestione LXC Container (creazione, avvio, stop, lista, status)\n"
@@ -81,7 +83,7 @@ def chat_graph_node(state: AgentState) -> AgentState:
         )
     elif "barzelletta" in task_lower or "storia" in task_lower:
         ans = "Perché i programmatori preferiscono la modalità scura? Perché la luce attira gli insetti (bugs)!"
-    elif "ciao" in task_lower or "salut" in task_lower or "chi sei" in task_lower:
+    elif "ciao" in task_lower or "salut" in task_lower:
         if "debian" in memory_context.lower() or "alice" in memory_context.lower() or "alice" in task_lower:
             ans = "Ciao Alice! Sono l'agente AI del tuo homelab Proxmox. Come posso aiutarti oggi?"
         else:
@@ -98,7 +100,9 @@ def ask_graph_node(state: AgentState) -> AgentState:
     task_lower = task.lower()
     memory_context = state.get("memory_context") or ""
 
-    if any(kw in task_lower for kw in ["tool", "strument", "accesso", "cosa puoi fare", "proxmox"]):
+    if any(kw in task_lower for kw in ["chi sei", "presentati", "chi sei tu"]):
+        ans = "Sono l'agente AI del tuo homelab Proxmox. Posso gestire i container LXC, allocare IP statici con IPAM, gestire record DNS Pi-hole, configurare Nginx Proxy Manager (NPM) e bootstrappare servizi con Agy."
+    elif any(kw in task_lower for kw in ["tool", "strument", "accesso", "cosa puoi fare", "proxmox"]):
         ans = (
             "Ho accesso ai seguenti 34 tool del sistema Proxmox Homelab via MetaMCP:\n\n"
             "1. **Proxmox LXC**: `proxmox-mcp__list_templates`, `create_container`, `start_container`, `stop_container`, `get_container_status`, `delete_container`\n"
@@ -113,10 +117,11 @@ def ask_graph_node(state: AgentState) -> AgentState:
         if "preferenza" in task_lower:
             ans = "In base alle preferenze salvate nella tua memoria persisente: preferisci utilizzare container LXC basati su Debian."
         else:
-            ans = f"Risposta alla query di memoria/informazione per '{task}'. Nessuna preferenza specifica trovata."
+            ans = f"Risposta alla query per '{task}': Sono l'agente AI dell'homelab Proxmox, pronto ad aiutarti con l'infrastruttura ed i tool MetaMCP."
 
     plan = {"mode": "ask", "tool_needed": False, "direct_answer": ans}
     return {"plan": plan}
+
 
 def act_graph_node(state: AgentState) -> AgentState:
     """Subgraph for single tool execution."""
