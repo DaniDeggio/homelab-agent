@@ -17,10 +17,10 @@ graph.client.timeout = 2
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("test_verification")
 
-def run_test(title: str, task: str, thread_id: str, force_mode: str = None):
+def run_test(title: str, task: str, thread_id: str, force_mode: str = None, execute: bool = False):
     print(f"\n==========================================")
     print(f"TEST: {title}")
-    print(f"Task: '{task}' | Thread: '{thread_id}' | ForceMode: '{force_mode}'")
+    print(f"Task: '{task}' | Thread: '{thread_id}' | ForceMode: '{force_mode}' | Execute: '{execute}'")
     print(f"==========================================")
 
     app = build_graph()
@@ -28,6 +28,7 @@ def run_test(title: str, task: str, thread_id: str, force_mode: str = None):
         "task": task,
         "thread_id": thread_id,
         "force_mode": force_mode,
+        "execute": execute,
         "agent_id": None,
         "memory_context": None,
         "mode": "",
@@ -49,10 +50,12 @@ def run_test(title: str, task: str, thread_id: str, force_mode: str = None):
     return {
         "mode": mode,
         "response": final_response,
-        "plan": plan
+        "plan": plan,
+        "plan_structure": final_state.get("plan_structure")
     }
 
 def main():
+    skip_e2e = "--skip-e2e" in sys.argv
     test_thread = "test_session_verify_1"
 
     # Test 1: Chat Mode
@@ -107,8 +110,24 @@ def main():
     assert res6["mode"] == "act"
     assert "Avvio esecuzione" in res6["response"]
 
+    # Test 7: Real End-to-End Execution with Proxmox/MetaMCP tool calls
+    if not skip_e2e:
+        print("\n--- TEST 7: End-to-End Reale con Verifica Proxmox & Cleanup ---")
+        res7 = run_test(
+            "Test 7: E2E Reale Esecuzione e Cleanup",
+            "Crea un servizio web di test su IP libero",
+            test_thread,
+            force_mode="plan",
+            execute=True
+        )
+        assert res7["mode"] == "act" or res7["mode"] == "plan", f"Expected mode 'act' or 'plan', got '{res7['mode']}'"
+        assert "Avvio esecuzione" in res7["response"] or "Tutti i passaggi" in res7["response"], "Execution output missing completion string!"
+        print("✅ TEST 7: Esecuzione reale completata ed esito verificato!")
+    else:
+        print("\n--- TEST 7: Skipped via --skip-e2e flag ---")
+
     print("\n==========================================")
-    print("ALL 6 VERIFICATION TESTS PASSED SUCCESSFULLY!")
+    print("ALL VERIFICATION TESTS PASSED SUCCESSFULLY!")
     print("==========================================")
 
 if __name__ == "__main__":

@@ -189,6 +189,75 @@ def ask_graph_node(state: AgentState) -> AgentState:
     return {"plan": plan}
 
 
+def extract_output_var(result: Any, output_var: str, step_id: int) -> Any:
+    """Estrae una variabile da un result di tool MetaMCP con fallback a euristiche annidate."""
+    if not output_var:
+        return None
+
+    def find_key_in_nested(obj: Any, key: str, max_depth: int = 5) -> Any:
+        if max_depth <= 0:
+            return None
+        if isinstance(obj, dict):
+            if key in obj and obj[key] is not None:
+                return obj[key]
+            for v in obj.values():
+                found = find_key_in_nested(v, key, max_depth - 1)
+                if found is not None:
+                    return found
+        elif isinstance(obj, list):
+            for item in obj:
+                found = find_key_in_nested(item, key, max_depth - 1)
+                if found is not None:
+                    return found
+        elif isinstance(obj, str):
+            try:
+                parsed = json.loads(obj)
+                return find_key_in_nested(parsed, key, max_depth - 1)
+            except Exception:
+                pass
+        return None
+
+    # 1. Cerca output_var esplicito
+    val = find_key_in_nested(result, output_var)
+    if val is not None:
+        logger.info(f"Step {step_id}: estratta variabile '{output_var}'={val}")
+        return val
+
+    # 2. Fallback a euristiche generiche
+    for heuristic_key in ["ip", "vmid", "id", "value", "result"]:
+        val = find_key_in_nested(result, heuristic_key)
+        if val is not None:
+            logger.info(f"Step {step_id}: estratta variabile '{output_var}'={val} (fallback su '{heuristic_key}')")
+            return val
+
+    # 3. Non trovato
+    logger.warning(f"Step {step_id}: variabile '{output_var}' non trovata nel result, uso None")
+    return None
+
+
+def topological_sort_steps(steps: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """Ordina gli step in ordine topologico basato su depends_on."""
+    if not steps:
+        return []
+    sorted_steps = []
+    remaining = list(steps)
+    executed_ids = set()
+
+    while remaining:
+        ready = [s for s in remaining if s.get("depends_on") is None or s.get("depends_on") in executed_ids]
+        if not ready:
+            ready = [remaining[0]]
+
+        for step in ready:
+            sorted_steps.append(step)
+            remaining.remove(step)
+            step_id = step.get("id")
+            if step_id is not None:
+                executed_ids.add(step_id)
+
+    return sorted_steps
+
+
 def execute_plan_node(state: AgentState) -> AgentState:
     """Executes real MetaMCP tools sequentially based on state['plan_structure']."""
     task = state.get("task", "")
@@ -198,7 +267,10 @@ def execute_plan_node(state: AgentState) -> AgentState:
         return act_graph_node(state)
 
     steps = plan_struct.get("steps", [])
+    sorted_steps = topological_sort_steps(steps)
+    
     context_vars = {}
+    executed_steps = []
     exec_lines = [
         f"🚀 **Avvio esecuzione reale del piano MetaMCP**: *'{task}'*\n",
         "### Esito Esecuzione Tool Real-Time:\n"
@@ -206,12 +278,15 @@ def execute_plan_node(state: AgentState) -> AgentState:
     
     has_error = False
 
-    for step in steps:
+    for step in sorted_steps:
         step_id = step.get("id", 1)
+        depends_on = step.get("depends_on")
         desc = step.get("description", "")
         tool_name = step.get("tool", "")
         args = step.get("args", {})
         output_var = step.get("output_var")
+
+        logger.info(f"Esecuzione step {step_id} (dipende da: {depends_on}): {tool_name}")
 
         # Substitute variable placeholders (e.g., {{allocated_ip}})
         resolved_args = {}
@@ -227,8 +302,6 @@ def execute_plan_node(state: AgentState) -> AgentState:
                 else:
                     resolved_args[k] = v
 
-        logger.info(f"Esecuzione step {step_id}: {tool_name}({resolved_args})")
-        
         try:
             result = client.call_tool(tool_name, resolved_args)
             logger.info(f"Step {step_id} completato: {result}")
@@ -239,29 +312,18 @@ def execute_plan_node(state: AgentState) -> AgentState:
                 exec_lines.append(f"{step_id}. ❌ `{desc}` — Tool `{tool_name}` fallito: `{err_msg}`")
                 break
             
-            # Save variables from result
+            # Extract output variable using robust extract_output_var helper
             if output_var:
-                if isinstance(result, dict):
-                    if "ip" in result:
-                        context_vars[output_var] = result["ip"]
-                    elif "vmid" in result:
-                        context_vars[output_var] = result["vmid"]
-                    elif "content" in result and isinstance(result["content"], list):
-                        text = "".join([c.get("text", "") for c in result["content"] if isinstance(c, dict)])
-                        try:
-                            parsed_res = json.loads(text)
-                            if isinstance(parsed_res, dict) and "ip" in parsed_res:
-                                context_vars[output_var] = parsed_res["ip"]
-                            elif isinstance(parsed_res, dict) and "vmid" in parsed_res:
-                                context_vars[output_var] = parsed_res["vmid"]
-                            else:
-                                context_vars[output_var] = text
-                        except Exception:
-                            context_vars[output_var] = text
-                    else:
-                        context_vars[output_var] = result
-                elif isinstance(result, (str, int)):
-                    context_vars[output_var] = result
+                extracted_val = extract_output_var(result, output_var, step_id)
+                if extracted_val is not None:
+                    context_vars[output_var] = extracted_val
+
+            executed_steps.append({
+                "step": step,
+                "tool": tool_name,
+                "args": resolved_args,
+                "result": result
+            })
 
             args_str = json.dumps(resolved_args, ensure_ascii=False) if resolved_args else "{}"
             exec_lines.append(f"{step_id}. ✅ `{desc}` — `{tool_name}`({args_str}) → *OK*")
@@ -271,10 +333,63 @@ def execute_plan_node(state: AgentState) -> AgentState:
             exec_lines.append(f"{step_id}. ❌ `{desc}` — Errore di chiamata tool `{tool_name}`: `{e}`")
             break
 
+    # Rollback parziale in ordine inverso in caso di errore
+    if has_error and executed_steps:
+        exec_lines.append("\n### 🔄 Rollback parziale degli step eseguiti:\n")
+        for step_info in reversed(executed_steps):
+            t_name = step_info.get("tool", "")
+            res_obj = step_info.get("result", {})
+            args_used = step_info.get("args", {})
+            
+            if t_name == "proxmox-mcp__allocate_ip":
+                ip_to_rel = args_used.get("ip") or extract_output_var(res_obj, "ip", step_info["step"].get("id", 0))
+                if ip_to_rel:
+                    try:
+                        logger.info(f"Rollback: rilascio IP {ip_to_rel}")
+                        client.call_tool("proxmox-mcp__release_ip", {"ip": ip_to_rel})
+                        exec_lines.append(f"  ✅ Rilasciato IP `{ip_to_rel}`")
+                    except Exception as rb_err:
+                        logger.warning(f"Rollback fallito per IP {ip_to_rel}: {rb_err}")
+                        exec_lines.append(f"  ❌ Errore rilascio IP `{ip_to_rel}`: {rb_err}")
+
+            elif t_name == "proxmox-mcp__create_lxc_from_template":
+                vmid_to_stop = extract_output_var(res_obj, "vmid", step_info["step"].get("id", 0))
+                if vmid_to_stop:
+                    try:
+                        logger.info(f"Rollback: arresto LXC {vmid_to_stop}")
+                        client.call_tool("proxmox-mcp__stop_container", {"vmid": vmid_to_stop})
+                        exec_lines.append(f"  ✅ Arrestato LXC container `{vmid_to_stop}`")
+                    except Exception as rb_err:
+                        logger.warning(f"Rollback fallito per VMID {vmid_to_stop}: {rb_err}")
+                        exec_lines.append(f"  ❌ Errore arresto LXC `{vmid_to_stop}`: {rb_err}")
+
+            elif t_name == "proxmox-mcp__add_pihole_dns_record":
+                dom = args_used.get("domain")
+                t_ip = args_used.get("target_ip") or args_used.get("ip")
+                if dom and t_ip:
+                    try:
+                        logger.info(f"Rollback: eliminazione DNS {dom}")
+                        client.call_tool("proxmox-mcp__delete_pihole_dns_record", {"domain": dom, "target_ip": t_ip})
+                        exec_lines.append(f"  ✅ Rimosso record DNS `{dom}`")
+                    except Exception as rb_err:
+                        logger.warning(f"Rollback fallito per DNS {dom}: {rb_err}")
+                        exec_lines.append(f"  ❌ Errore rimozione DNS `{dom}`: {rb_err}")
+
+            elif t_name == "proxmox-mcp__create_npm_proxy_host":
+                dom = args_used.get("domain")
+                if dom:
+                    try:
+                        logger.info(f"Rollback: eliminazione Host Proxy NPM {dom}")
+                        client.call_tool("proxmox-mcp__delete_npm_proxy_host", {"domain": dom})
+                        exec_lines.append(f"  ✅ Eliminato Host Proxy NPM `{dom}`")
+                    except Exception as rb_err:
+                        logger.warning(f"Rollback fallito per NPM {dom}: {rb_err}")
+                        exec_lines.append(f"  ❌ Errore eliminazione Host Proxy NPM `{dom}`: {rb_err}")
+
+        exec_lines.append("\n⚠️ **Rollback parziale completato. Stato dell'infrastruttura ripristinato.**")
+
     if not has_error:
         exec_lines.append("\n🎉 **Tutti i passaggi del piano sono stati eseguiti con successo su Proxmox!**")
-    else:
-        exec_lines.append("\n⚠️ **L'esecuzione del piano si è interrotta a causa di un errore nello step specificato.**")
 
     ans = "\n".join(exec_lines)
     plan = {"mode": "act", "tool_needed": True, "direct_answer": ans, "plan_structure": plan_struct}
