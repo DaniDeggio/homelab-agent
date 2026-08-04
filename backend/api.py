@@ -105,7 +105,7 @@ async def list_threads():
     try:
         conn = sqlite3.connect(config.CHECKPOINT_DB_PATH)
         cursor = conn.cursor()
-        cursor.execute("SELECT thread_id, COUNT(*) FROM checkpoints GROUP BY thread_id")
+        cursor.execute("SELECT thread_id, COUNT(*) FROM checkpoints GROUP BY thread_id ORDER BY rowid DESC")
         rows = cursor.fetchall()
         conn.close()
         
@@ -113,25 +113,15 @@ async def list_threads():
         for tid, count in rows:
             if not tid:
                 continue
-            last_msg = None
-            agent_id = letta_client.create_thread(tid)
-            if agent_id:
-                msgs = letta_client.get_messages(agent_id, limit=5)
-                if msgs and isinstance(msgs, list):
-                    for m in reversed(msgs):
-                        if isinstance(m, dict):
-                            txt = m.get("text") or m.get("content") or m.get("message")
-                            if txt and "system" not in str(m.get("message_type") or m.get("role") or "").lower():
-                                last_msg = str(txt)[:100]
-                                break
             summaries.append(ThreadSummary(
                 thread_id=tid,
-                last_message=last_msg,
+                last_message=None,
                 checkpoint_count=count
             ))
         return summaries
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to list threads: {str(e)}")
+
 
 @api.get("/v1/threads/{thread_id}", dependencies=[Depends(verify_api_key)])
 async def get_thread(thread_id: str):

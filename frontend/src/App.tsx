@@ -1,4 +1,4 @@
-import { useState, useEffect, useCallback } from 'react';
+import { useState, useEffect, useCallback, useRef } from 'react';
 import { ThreadList } from './ThreadList';
 import { Chat } from './Chat';
 import type { MessageItem } from './Chat';
@@ -16,6 +16,9 @@ export function App() {
   const [isLoadingChat, setIsLoadingChat] = useState<boolean>(false);
   const [isBackendHealthy, setIsBackendHealthy] = useState<boolean | null>(null);
   const [error, setError] = useState<string | null>(null);
+
+  // Ref to track active message sending to prevent loadThreadHistory from wiping state
+  const isSendingRef = useRef<boolean>(false);
 
   // Mobile Drawers Navigation state
   const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState<boolean>(false);
@@ -72,17 +75,25 @@ export function App() {
 
   // Fetch history for a specific thread from backend
   const loadThreadHistory = useCallback(async (threadId: string) => {
+    if (isSendingRef.current) return;
+    setIsLoadingChat(true);
     try {
       const details = await getThreadDetails(threadId);
       if (details && details.letta_messages) {
         const parsedMsgs = parseLettaMessages(details.letta_messages);
-        setThreadMessagesMap((prev) => ({
-          ...prev,
-          [threadId]: parsedMsgs,
-        }));
+        setThreadMessagesMap((prev) => {
+          const existing = prev[threadId] || [];
+          // Keep local optimistic messages if history from server is empty
+          if (parsedMsgs.length > 0 || existing.length === 0) {
+            return { ...prev, [threadId]: parsedMsgs };
+          }
+          return prev;
+        });
       }
     } catch (err) {
       console.warn(`Could not load history for thread ${threadId}:`, err);
+    } finally {
+      setIsLoadingChat(false);
     }
   }, []);
 
@@ -93,14 +104,11 @@ export function App() {
       const data = await listThreads();
       setThreads(data);
 
-      // Restore thread from localStorage or fallback to first thread in list
       const savedThread = localStorage.getItem('main_agent_current_thread');
       if (savedThread && data.some((t) => t.thread_id === savedThread)) {
-        setCurrentThreadId(savedThread);
-      } else if (data.length > 0 && !currentThreadId) {
-        const firstId = data[0].thread_id;
-        setCurrentThreadId(firstId);
-        localStorage.setItem('main_agent_current_thread', firstId);
+        setCurrentThreadId((prev) => prev || savedThread);
+      } else if (data.length > 0) {
+        setCurrentThreadId((prev) => prev || data[0].thread_id);
       }
     } catch (err: any) {
       console.error('Failed to load threads:', err);
@@ -108,11 +116,11 @@ export function App() {
     } finally {
       setIsLoadingThreads(false);
     }
-  }, [currentThreadId]);
+  }, []);
 
   // Load history whenever currentThreadId changes
   useEffect(() => {
-    if (currentThreadId) {
+    if (currentThreadId && !isSendingRef.current) {
       localStorage.setItem('main_agent_current_thread', currentThreadId);
       loadThreadHistory(currentThreadId);
     }
@@ -139,6 +147,7 @@ export function App() {
 
   // Handle Thread selection
   const handleSelectThread = (id: string) => {
+    if (id === currentThreadId) return;
     setCurrentThreadId(id);
     localStorage.setItem('main_agent_current_thread', id);
     setError(null);
@@ -153,6 +162,8 @@ export function App() {
     execute: boolean
   ) => {
     setError(null);
+    isSendingRef.current = true;
+
     const targetThreadId = currentThreadId || `thread_${Date.now()}`;
     if (!currentThreadId) {
       setCurrentThreadId(targetThreadId);
@@ -230,6 +241,7 @@ export function App() {
       }));
     } finally {
       setIsLoadingChat(false);
+      isSendingRef.current = false;
     }
   };
 
