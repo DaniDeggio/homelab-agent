@@ -47,7 +47,7 @@ export function App() {
     }
   }, []);
 
-  // Convert Letta backend messages to UI MessageItems
+  // Convert Letta backend messages to UI MessageItems and extract diagnostic metadata
   const parseLettaMessages = (messages: LettaMessage[]): MessageItem[] => {
     const chatMsgs: MessageItem[] = [];
 
@@ -68,19 +68,52 @@ export function App() {
         ? new Date(m.date).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
         : '';
 
+      const content = m.content || '';
+
+      // Extract mode from message content if formatted as [Mode: CHAT/ASK/ACT/PLAN]
+      let mode: string | undefined = undefined;
+      const modeMatch = content.match(/\[Mode:\s*([A-Za-z]+)\]/);
+      if (modeMatch) {
+        mode = modeMatch[1].toLowerCase();
+      }
+
+      // Extract tool_used
+      let tool_used: string | undefined = m.tool_name;
+      const toolMatch = content.match(/Tool utilizzato:\s*([^\n]+)/);
+      if (toolMatch) {
+        tool_used = toolMatch[1].trim();
+      }
+
+      // Extract plan_steps
+      let plan_steps: string[] | undefined = undefined;
+      if (content.includes('Passaggi di esecuzione:')) {
+        const planSection = content.split('Passaggi di esecuzione:')[1];
+        if (planSection) {
+          const lines = planSection
+            .split('\n')
+            .map((l) => l.trim())
+            .filter((l) => /^\d+\.\s+/.test(l));
+          if (lines.length > 0) {
+            plan_steps = lines.map((l) => l.replace(/^\d+\.\s+/, ''));
+          }
+        }
+      }
+
       chatMsgs.push({
         id: m.id || `msg_${idx}`,
         sender: m.message_type === 'user_message' ? 'user' : 'assistant',
-        content: m.content || '',
+        content,
         timestamp: timeStr,
-        tool_used: m.tool_name,
+        mode,
+        tool_used,
+        plan_steps,
       });
     });
 
     return chatMsgs;
   };
 
-  // Fetch history for a specific thread from backend
+  // Fetch history for a specific thread from backend and update diagnostic sidebar
   const loadThreadHistory = useCallback(async (threadId: string) => {
     if (isSendingRef.current) return;
     setIsLoadingChat(true);
@@ -95,6 +128,18 @@ export function App() {
           }
           return prev;
         });
+
+        // Update active diagnostic panel from latest assistant message
+        const lastAssistant = [...parsedMsgs].reverse().find((m) => m.sender === 'assistant');
+        if (lastAssistant) {
+          setActiveMode(lastAssistant.mode);
+          setActiveTool(lastAssistant.tool_used);
+          setActivePlan(lastAssistant.plan_steps);
+        } else {
+          setActiveMode(undefined);
+          setActiveTool(undefined);
+          setActivePlan(undefined);
+        }
       }
     } catch (err) {
       console.warn(`Could not load history for thread ${threadId}:`, err);
@@ -181,6 +226,9 @@ export function App() {
         } else {
           setCurrentThreadId(null);
           localStorage.removeItem('main_agent_current_thread');
+          setActiveMode(undefined);
+          setActiveTool(undefined);
+          setActivePlan(undefined);
         }
       }
     } catch (err: any) {
@@ -197,6 +245,9 @@ export function App() {
       setThreadMessagesMap({});
       setCurrentThreadId(null);
       localStorage.removeItem('main_agent_current_thread');
+      setActiveMode(undefined);
+      setActiveTool(undefined);
+      setActivePlan(undefined);
     } catch (err: any) {
       console.error('Failed to clear threads:', err);
       setError('Failed to clear threads');

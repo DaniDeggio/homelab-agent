@@ -1,5 +1,5 @@
 import React from 'react';
-import { Wrench, ListChecks, Activity, ShieldCheck, ChevronRight, Zap, X } from 'lucide-react';
+import { Wrench, ListChecks, Activity, ShieldCheck, ChevronRight, Zap, X, Info } from 'lucide-react';
 
 interface ToolLogProps {
   toolUsed?: string;
@@ -67,9 +67,14 @@ export const ToolLog: React.FC<ToolLogProps> = ({
               <span className="font-medium text-slate-300">Tool Executed</span>
             </div>
             {toolUsed ? (
-              <div className="bg-emerald-500/10 border border-emerald-500/20 text-emerald-300 px-3 py-2 rounded-lg text-xs font-mono flex items-center justify-between">
-                <span>{toolUsed}</span>
-                <ShieldCheck size={14} className="text-emerald-400" />
+              <div className="bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 px-3 py-2 rounded-lg text-xs font-mono flex items-center justify-between shadow-sm">
+                <span className="truncate">{toolUsed}</span>
+                <ShieldCheck size={16} className="text-emerald-400 shrink-0" />
+              </div>
+            ) : mode === 'chat' || mode === 'ask' ? (
+              <div className="bg-slate-900/80 border border-slate-800 text-slate-400 px-3 py-2 rounded-lg text-xs flex items-center gap-2">
+                <Info size={14} className="text-blue-400 shrink-0" />
+                <span>Info query (no tool execution needed)</span>
               </div>
             ) : (
               <p className="text-xs text-slate-500 italic">No tool invocation recorded for last query.</p>
