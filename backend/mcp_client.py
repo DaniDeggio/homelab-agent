@@ -9,7 +9,7 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("mcp_client")
 
 class MetaMCPClient:
-    def __init__(self, base_url: str, api_key: str = "", timeout: int = 15):
+    def __init__(self, base_url: str, api_key: str = "", timeout: int = 25):
         self.base_url = base_url
         self.api_key = api_key
         self.timeout = timeout

@@ -70,10 +70,14 @@ def main():
     assert res3["mode"] == "act", f"Expected mode 'act', got '{res3['mode']}'"
     assert res3["plan"].get("tool_name") == "proxmox-mcp__list_templates"
 
+    res3b = run_test("Test 3b: Lista container", "Dammi la lista dei container attualmente attivi sul mio server", test_thread)
+    assert res3b["mode"] == "act", f"Expected mode 'act', got '{res3b['mode']}'"
+    assert res3b["plan"].get("tool_name") == "proxmox-mcp__list_containers", f"Expected tool 'proxmox-mcp__list_containers', got '{res3b['plan'].get('tool_name')}'"
+
     # Test 4: Plan Mode (Multi-step plan)
     res4 = run_test("Test 4: Plan multi-step", "Crea un nuovo servizio web con IP libero e DNS custom", test_thread, force_mode="plan")
     assert res4["mode"] == "plan", f"Expected mode 'plan', got '{res4['mode']}'"
-    assert "Crea un nuovo servizio web" in res4["response"], "Plan step does not reflect task!"
+    assert "Piano multi-step" in res4["response"], "Plan step response missing title!"
 
     # Test 5: Consistency test (Repeat Test 1 and 2 three times)
     print("\n--- TEST 5: Consistency Test (3 Iterations) ---")

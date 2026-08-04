@@ -1,6 +1,7 @@
 import json
 import sqlite3
 import logging
+import requests
 from typing import TypedDict, Optional, Dict, Any
 from langgraph.graph import StateGraph, END
 from langgraph.checkpoint.sqlite import SqliteSaver
@@ -26,6 +27,66 @@ class AgentState(TypedDict):
 client = MetaMCPClient(base_url=config.METAMCP_URL, api_key=config.METAMCP_API_KEY)
 conn = sqlite3.connect(config.CHECKPOINT_DB_PATH, check_same_thread=False)
 memory = SqliteSaver(conn)
+
+def _call_llm(prompt: str, system_prompt: str = None, max_tokens: int = 600, temperature: float = 0.3) -> str:
+    url = f"{config.LLAMA_CPP_URL.rstrip('/')}/chat/completions"
+    messages = []
+    if system_prompt:
+        messages.append({"role": "system", "content": system_prompt})
+    messages.append({"role": "user", "content": prompt})
+    
+    payload = {
+        "model": config.DEFAULT_MODEL,
+        "messages": messages,
+        "max_tokens": max_tokens,
+        "temperature": temperature
+    }
+    try:
+        res = requests.post(url, json=payload, timeout=8)
+        if res.status_code == 200:
+            msg_obj = res.json()["choices"][0]["message"]
+            content = msg_obj.get("content")
+            if not content and "reasoning_content" in msg_obj:
+                content = msg_obj.get("reasoning_content")
+            if content and content.strip():
+                return content.strip()
+    except Exception as e:
+        logger.warning(f"LLM completion call failed: {e}")
+    return ""
+
+def _format_metamcp_tools_catalog() -> str:
+    tools_by_cat = {
+        "📦 Proxmox LXC Container Management": [
+            "`proxmox-mcp__list_containers`", "`proxmox-mcp__get_container_status`", "`proxmox-mcp__list_templates`",
+            "`proxmox-mcp__create_lxc_from_template`", "`proxmox-mcp__start_container`", "`proxmox-mcp__stop_container`",
+            "`proxmox-mcp__resize_lxc_disk`", "`proxmox-mcp__update_lxc_resources`", "`proxmox-mcp__create_lxc_snapshot`",
+            "`proxmox-mcp__rollback_lxc_snapshot`", "`proxmox-mcp__list_lxc_snapshots`", "`proxmox-mcp__import_existing_lxc`",
+            "`proxmox-mcp__wait_for_container`"
+        ],
+        "🌐 IPAM (IP Management)": [
+            "`proxmox-mcp__allocate_ip`", "`proxmox-mcp__release_ip`", "`proxmox-mcp__list_ip_reservations`"
+        ],
+        "🛡️ DNS (Pi-hole)": [
+            "`proxmox-mcp__list_pihole_dns_records`", "`proxmox-mcp__add_pihole_dns_record`", "`proxmox-mcp__delete_pihole_dns_record`"
+        ],
+        "🔀 Nginx Proxy Manager (NPM)": [
+            "`proxmox-mcp__list_npm_proxy_hosts`", "`proxmox-mcp__create_npm_proxy_host`", "`proxmox-mcp__delete_npm_proxy_host`"
+        ],
+        "⚙️ Service Bootstrap (Agy)": [
+            "`proxmox-mcp__run_agy_bootstrap`", "`proxmox-mcp__generate_agy_prompt_tool`", "`proxmox-mcp__create_service`",
+            "`proxmox-mcp__create_service_dry_run`", "`proxmox-mcp__run_host_agy`", "`proxmox-mcp__generate_host_agy_prompt`"
+        ],
+        "💻 Host & Command Execution": [
+            "`proxmox-mcp__exec_lxc_command`", "`proxmox-mcp__exec_host_command`", "`proxmox-mcp__get_lxc_service_logs`",
+            "`proxmox-mcp__get_storage_status`", "`proxmox-mcp__get_task_status`", "`proxmox-mcp__get_task_log`"
+        ]
+    }
+
+    lines = ["Ho accesso a **34 tool** registrati su MetaMCP per la gestione automatizzata dell'infrastruttura Proxmox Homelab:\n"]
+    for cat, tlist in tools_by_cat.items():
+        lines.append(f"### {cat}")
+        lines.append(", ".join(tlist) + "\n")
+    return "\n".join(lines)
 
 def intake_node(state: AgentState) -> AgentState:
     """Receives the task and settings."""
@@ -73,23 +134,24 @@ def chat_graph_node(state: AgentState) -> AgentState:
     if any(kw in task_lower for kw in ["chi sei", "presentati", "chi sei tu"]):
         ans = "Sono l'agente AI del tuo homelab Proxmox. Posso gestire i container LXC, allocare IP con IPAM, gestire i record DNS Pi-hole, configurare Nginx Proxy Manager (NPM) e bootstrappare servizi con Agy."
     elif any(kw in task_lower for kw in ["tool", "strument", "accesso", "cosa puoi fare", "proxmox"]):
-        ans = (
-            "Ho accesso a 34 tool per la gestione dell'homelab Proxmox registrati su MetaMCP:\n"
-            "- Gestione LXC Container (creazione, avvio, stop, lista, status)\n"
-            "- Allocazione IP statici tramite IPAM\n"
-            "- Gestione Record DNS custom tramite Pi-hole\n"
-            "- Configurazione Proxy Host su Nginx Proxy Manager (NPM)\n"
-            "- Bootstrap e configurazione automatica dei container con Agy"
-        )
+        ans = _format_metamcp_tools_catalog()
     elif "barzelletta" in task_lower or "storia" in task_lower:
         ans = "Perché i programmatori preferiscono la modalità scura? Perché la luce attira gli insetti (bugs)!"
-    elif "ciao" in task_lower or "salut" in task_lower:
-        if "debian" in memory_context.lower() or "alice" in memory_context.lower() or "alice" in task_lower:
-            ans = "Ciao Alice! Sono l'agente AI del tuo homelab Proxmox. Come posso aiutarti oggi?"
-        else:
-            ans = "Ciao! Sono l'agente AI del tuo homelab Proxmox. Come posso aiutarti oggi?"
     else:
-        ans = f"Ho ricevuto la tua richiesta: '{task}'. Come posso esserti utile?"
+        system_prompt = (
+            "Sei l'Agente AI dell'Homelab Proxmox VE. Rispondi in modo naturale, simpatico e utile in italiano. "
+            f"Contesto memoria conversazionale:\n{memory_context}"
+        )
+        llm_ans = _call_llm(task, system_prompt=system_prompt, max_tokens=512, temperature=0.5)
+        if llm_ans:
+            ans = llm_ans
+        elif "ciao" in task_lower or "salut" in task_lower:
+            if "debian" in memory_context.lower() or "alice" in memory_context.lower() or "alice" in task_lower:
+                ans = "Ciao Alice! Sono l'agente AI del tuo homelab Proxmox. Come posso aiutarti oggi?"
+            else:
+                ans = "Ciao! Sono l'agente AI del tuo homelab Proxmox. Come posso aiutarti oggi?"
+        else:
+            ans = f"Ho ricevuto la tua richiesta: '{task}'. Come posso esserti utile per la gestione dell'homelab?"
 
     plan = {"mode": "chat", "tool_needed": False, "direct_answer": ans}
     return {"plan": plan}
@@ -100,21 +162,21 @@ def ask_graph_node(state: AgentState) -> AgentState:
     task_lower = task.lower()
     memory_context = state.get("memory_context") or ""
 
-    if any(kw in task_lower for kw in ["chi sei", "presentati", "chi sei tu"]):
+    if any(kw in task_lower for kw in ["tool", "strument", "accesso", "cosa puoi fare", "proxmox"]) and ("qual" in task_lower or "quali" in task_lower or "cosa" in task_lower or "lista" in task_lower):
+        ans = _format_metamcp_tools_catalog()
+    elif any(kw in task_lower for kw in ["chi sei", "presentati", "chi sei tu"]):
         ans = "Sono l'agente AI del tuo homelab Proxmox. Posso gestire i container LXC, allocare IP statici con IPAM, gestire record DNS Pi-hole, configurare Nginx Proxy Manager (NPM) e bootstrappare servizi con Agy."
-    elif any(kw in task_lower for kw in ["tool", "strument", "accesso", "cosa puoi fare", "proxmox"]):
-        ans = (
-            "Ho accesso ai seguenti 34 tool del sistema Proxmox Homelab via MetaMCP:\n\n"
-            "1. **Proxmox LXC**: `proxmox-mcp__list_templates`, `create_container`, `start_container`, `stop_container`, `get_container_status`, `delete_container`\n"
-            "2. **IPAM**: `ipam_allocate_ip`, `ipam_get_free_ip`, `ipam_release_ip`\n"
-            "3. **DNS (Pi-hole)**: `dns_create_record`, `dns_list_records`, `dns_delete_record`\n"
-            "4. **NPM (Nginx Proxy Manager)**: `npm_create_proxy_host`, `npm_list_hosts`\n"
-            "5. **Agy**: `agy_bootstrap_container`, `agy_run_script`"
-        )
     elif memory_context and any(kw in task_lower for kw in ["ricord", "storico", "prima", "preferen", "chi sono"]):
         ans = f"In base alla memoria persisente e allo storico delle conversazioni:\n\n{memory_context}"
     else:
-        if "preferenza" in task_lower:
+        system_prompt = (
+            "Sei l'Agente AI dell'Homelab Proxmox VE. Rispondi in italiano in modo accurato e utile alla query dell'utente. "
+            f"Contesto memoria conversazionale:\n{memory_context}"
+        )
+        llm_ans = _call_llm(task, system_prompt=system_prompt, max_tokens=512, temperature=0.3)
+        if llm_ans:
+            ans = llm_ans
+        elif "preferenza" in task_lower:
             ans = "In base alle preferenze salvate nella tua memoria persisente: preferisci utilizzare container LXC basati su Debian."
         else:
             ans = f"Risposta alla query per '{task}': Sono l'agente AI dell'homelab Proxmox, pronto ad aiutarti con l'infrastruttura ed i tool MetaMCP."
@@ -128,21 +190,40 @@ def act_graph_node(state: AgentState) -> AgentState:
     task = state.get("task", "")
     task_lower = task.lower()
 
-    if "template" in task_lower or ("lista" in task_lower and "template" in task_lower):
-        tool_name = "proxmox-mcp__list_templates"
+    if any(kw in task_lower for kw in ["lista container", "container attivi", "elenco container", "lista dei container", "list_containers", "tutti i container"]):
+        tool_name = "proxmox-mcp__list_containers"
         arguments = {}
-    elif "container" in task_lower or "stato" in task_lower or "avvia" in task_lower:
-        words = task_lower.split()
-        vmid = 100
-        for word in words:
+    elif any(kw in task_lower for kw in ["stato", "status", "container"]) and any(word.isdigit() for word in task_lower.split()):
+        vmid = None
+        for word in task_lower.split():
             if word.isdigit():
                 vmid = int(word)
                 break
-        tool_name = "proxmox-mcp__get_container_status"
-        arguments = {"vmid": vmid}
-    else:
+        if vmid:
+            tool_name = "proxmox-mcp__get_container_status"
+            arguments = {"vmid": vmid}
+        else:
+            tool_name = "proxmox-mcp__list_containers"
+            arguments = {}
+    elif any(kw in task_lower for kw in ["template", "templates"]):
         tool_name = "proxmox-mcp__list_templates"
         arguments = {}
+    elif any(kw in task_lower for kw in ["dns", "record dns", "pihole"]):
+        tool_name = "proxmox-mcp__list_pihole_dns_records"
+        arguments = {}
+    elif any(kw in task_lower for kw in ["proxy", "npm"]):
+        tool_name = "proxmox-mcp__list_npm_proxy_hosts"
+        arguments = {}
+    elif any(kw in task_lower for kw in ["ipam", "riservazioni ip", "ip allocati", "ip liberi"]):
+        tool_name = "proxmox-mcp__list_ip_reservations"
+        arguments = {}
+    else:
+        if "container" in task_lower:
+            tool_name = "proxmox-mcp__list_containers"
+            arguments = {}
+        else:
+            tool_name = "proxmox-mcp__list_templates"
+            arguments = {}
 
     try:
         result = client.call_tool(tool_name, arguments)
@@ -155,15 +236,47 @@ def act_graph_node(state: AgentState) -> AgentState:
 def plan_graph_node(state: AgentState) -> AgentState:
     """Subgraph for detailed multi-step planning (simulation/dry-run)."""
     task = state.get("task", "")
-    
-    plan_steps = [
-        f"1. Verificare disponibilità risorse e allocare VMID per '{task}'",
-        "2. Assegnare IP statico libero tramite modulo IPAM",
-        "3. Configurare record DNS Pi-hole per la risoluzione dominio",
-        "4. Creare Host Proxy su Nginx Proxy Manager (NPM) con certificato SSL",
-        "5. Creare, avviare e bootstrappare il container LXC tramite Agy"
-    ]
-    
+    memory_context = state.get("memory_context") or ""
+
+    system_prompt = (
+        "Sei l'Agente AI dell'Homelab Proxmox VE. "
+        "Genera un piano d'azione numerato passo per passo (massimo 5 passaggi) specifico per soddisfare la richiesta dell'utente. "
+        "I tool disponibili includono Proxmox LXC, IPAM, DNS Pi-hole, Nginx Proxy Manager (NPM), e script Agy. "
+        "Rispondi SOLAMENTE con la lista numerata dei passaggi di esecuzione."
+    )
+
+    llm_plan = _call_llm(task, system_prompt=system_prompt, max_tokens=600, temperature=0.2)
+    plan_steps = []
+    if llm_plan:
+        for line in llm_plan.split("\n"):
+            line = line.strip()
+            if line and (line[0].isdigit() or line.startswith("-") or line.startswith("*")):
+                plan_steps.append(line)
+
+    if not plan_steps:
+        task_lower = task.lower()
+        if any(kw in task_lower for kw in ["migra", "storage", "sposta"]):
+            plan_steps = [
+                f"1. Controllo stato del container e del nuovo target storage per '{task}'",
+                "2. Creazione snapshot di sicurezza su LVM/ZFS",
+                "3. Esecuzione migrazione disco verso il nuovo storage",
+                "4. Verifica avvio e integrità servizi sul container migrato"
+            ]
+        elif any(kw in task_lower for kw in ["lista", "ispeziona", "controlla"]):
+            plan_steps = [
+                f"1. Acquisizione inventario e stato real-time dei container per '{task}'",
+                "2. Verifica delle risorse allocate (CPU, RAM, Disco)",
+                "3. Generazione del report diagnostico completo per l'utente"
+            ]
+        else:
+            plan_steps = [
+                f"1. Verificare disponibilità risorse e allocare VMID per '{task}'",
+                "2. Assegnare IP statico libero tramite modulo IPAM",
+                "3. Configurare record DNS Pi-hole per la risoluzione dominio",
+                "4. Creare Host Proxy su Nginx Proxy Manager (NPM) con certificato SSL",
+                "5. Creare, avviare e bootstrappare il container LXC tramite Agy"
+            ]
+
     formatted_plan = f"Piano multi-step generato per: '{task}'\n\nPassaggi di esecuzione:\n" + "\n".join(plan_steps)
     formatted_plan += "\n\nNota: Stato 'dry-run' completato. In attesa di conferma per l'esecuzione dei tool in sequenza."
 
