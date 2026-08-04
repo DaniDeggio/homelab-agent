@@ -1,5 +1,5 @@
 from pydantic import BaseModel
-from typing import Optional, Literal, List
+from typing import Optional, Literal, List, Dict, Any
 
 class ChatRequest(BaseModel):
     input: str
@@ -13,6 +13,7 @@ class ChatResponse(BaseModel):
     response: str
     tool_used: Optional[str] = None
     plan_steps: Optional[List[str]] = None
+    plan_structure: Optional[Dict[str, Any]] = None
 
 class ThreadSummary(BaseModel):
     thread_id: str

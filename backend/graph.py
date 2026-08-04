@@ -23,6 +23,7 @@ class AgentState(TypedDict):
     memory_context: Optional[str]
     mode: str
     plan: Dict[str, Any]
+    plan_structure: Optional[Dict[str, Any]]
     tool_result: Optional[Any]
     final_response: str
 
@@ -188,10 +189,106 @@ def ask_graph_node(state: AgentState) -> AgentState:
     return {"plan": plan}
 
 
+def execute_plan_node(state: AgentState) -> AgentState:
+    """Executes real MetaMCP tools sequentially based on state['plan_structure']."""
+    task = state.get("task", "")
+    plan_struct = state.get("plan_structure") or state.get("plan", {}).get("plan_structure")
+    
+    if not plan_struct or not isinstance(plan_struct, dict) or "steps" not in plan_struct:
+        return act_graph_node(state)
+
+    steps = plan_struct.get("steps", [])
+    context_vars = {}
+    exec_lines = [
+        f"🚀 **Avvio esecuzione reale del piano MetaMCP**: *'{task}'*\n",
+        "### Esito Esecuzione Tool Real-Time:\n"
+    ]
+    
+    has_error = False
+
+    for step in steps:
+        step_id = step.get("id", 1)
+        desc = step.get("description", "")
+        tool_name = step.get("tool", "")
+        args = step.get("args", {})
+        output_var = step.get("output_var")
+
+        # Substitute variable placeholders (e.g., {{allocated_ip}})
+        resolved_args = {}
+        if isinstance(args, dict):
+            for k, v in args.items():
+                if isinstance(v, str):
+                    val_str = v
+                    for var_k, var_v in context_vars.items():
+                        placeholder = f"{{{{{var_k}}}}}"
+                        if placeholder in val_str:
+                            val_str = val_str.replace(placeholder, str(var_v))
+                    resolved_args[k] = val_str
+                else:
+                    resolved_args[k] = v
+
+        logger.info(f"Esecuzione step {step_id}: {tool_name}({resolved_args})")
+        
+        try:
+            result = client.call_tool(tool_name, resolved_args)
+            logger.info(f"Step {step_id} completato: {result}")
+            
+            if isinstance(result, dict) and "error" in result:
+                has_error = True
+                err_msg = result["error"]
+                exec_lines.append(f"{step_id}. ❌ `{desc}` — Tool `{tool_name}` fallito: `{err_msg}`")
+                break
+            
+            # Save variables from result
+            if output_var:
+                if isinstance(result, dict):
+                    if "ip" in result:
+                        context_vars[output_var] = result["ip"]
+                    elif "vmid" in result:
+                        context_vars[output_var] = result["vmid"]
+                    elif "content" in result and isinstance(result["content"], list):
+                        text = "".join([c.get("text", "") for c in result["content"] if isinstance(c, dict)])
+                        try:
+                            parsed_res = json.loads(text)
+                            if isinstance(parsed_res, dict) and "ip" in parsed_res:
+                                context_vars[output_var] = parsed_res["ip"]
+                            elif isinstance(parsed_res, dict) and "vmid" in parsed_res:
+                                context_vars[output_var] = parsed_res["vmid"]
+                            else:
+                                context_vars[output_var] = text
+                        except Exception:
+                            context_vars[output_var] = text
+                    else:
+                        context_vars[output_var] = result
+                elif isinstance(result, (str, int)):
+                    context_vars[output_var] = result
+
+            args_str = json.dumps(resolved_args, ensure_ascii=False) if resolved_args else "{}"
+            exec_lines.append(f"{step_id}. ✅ `{desc}` — `{tool_name}`({args_str}) → *OK*")
+        except Exception as e:
+            has_error = True
+            logger.error(f"Step {step_id} fallito con eccezione: {e}")
+            exec_lines.append(f"{step_id}. ❌ `{desc}` — Errore di chiamata tool `{tool_name}`: `{e}`")
+            break
+
+    if not has_error:
+        exec_lines.append("\n🎉 **Tutti i passaggi del piano sono stati eseguiti con successo su Proxmox!**")
+    else:
+        exec_lines.append("\n⚠️ **L'esecuzione del piano si è interrotta a causa di un errore nello step specificato.**")
+
+    ans = "\n".join(exec_lines)
+    plan = {"mode": "act", "tool_needed": True, "direct_answer": ans, "plan_structure": plan_struct}
+    return {"plan": plan, "plan_structure": plan_struct, "final_response": ans}
+
+
 def act_graph_node(state: AgentState) -> AgentState:
     """Subgraph for single tool or plan execution."""
     task = state.get("task", "")
     task_lower = task.lower()
+
+    if state.get("plan_structure") or state.get("plan", {}).get("plan_structure"):
+        if state.get("execute") or any(kw in task_lower for kw in ["esegui il piano", "esegui piano", "avvia esecuzione", "esecuzione piano"]):
+            return execute_plan_node(state)
 
     if any(kw in task_lower for kw in ["esegui il piano", "esegui piano", "avvia esecuzione", "esecuzione piano"]):
         plan_summary = task.split(":", 1)[1].strip() if ":" in task else task
@@ -263,7 +360,7 @@ def act_graph_node(state: AgentState) -> AgentState:
     return {"plan": plan, "tool_result": result}
 
 def plan_graph_node(state: AgentState) -> AgentState:
-    """Subgraph for detailed multi-step planning (simulation/dry-run)."""
+    """Subgraph for detailed multi-step planning (simulation/dry-run & JSON plan generation)."""
     task = state.get("task", "")
     memory_context = state.get("memory_context") or ""
 
@@ -284,36 +381,117 @@ def plan_graph_node(state: AgentState) -> AgentState:
                 if cleaned:
                     plan_steps.append(cleaned)
 
-    if not plan_steps:
+    # Generate JSON plan_structure via LLM
+    json_prompt = (
+        f"Genera un piano JSON strutturato per il seguente task dell'utente: '{task}'.\n"
+        "Rispondi ESCLUSIVAMENTE con un JSON valido con questa struttura:\n"
+        "{\n"
+        "  \"steps\": [\n"
+        "    {\n"
+        "      \"id\": 1,\n"
+        "      \"description\": \"Descrizione dello step\",\n"
+        "      \"tool\": \"proxmox-mcp__nome_tool\",\n"
+        "      \"args\": {\"param\": \"valore\"},\n"
+        "      \"depends_on\": null,\n"
+        "      \"output_var\": \"nome_variabile\"\n"
+        "    }\n"
+        "  ]\n"
+        "}"
+    )
+    json_resp = _call_llm(task, system_prompt=json_prompt, max_tokens=600, temperature=0.1)
+    plan_structure = None
+    if json_resp:
+        try:
+            clean_json = re.sub(r'```(?:json)?', '', json_resp).strip()
+            parsed = json.loads(clean_json)
+            if isinstance(parsed, dict) and "steps" in parsed and isinstance(parsed["steps"], list):
+                plan_structure = parsed
+        except Exception as e:
+            logger.warning(f"Failed to parse LLM plan JSON: {e}")
+
+    if not plan_structure:
         task_lower = task.lower()
-        if any(kw in task_lower for kw in ["migra", "storage", "sposta"]):
-            plan_steps = [
-                f"Controllo stato del container e del nuovo target storage per '{task}'",
-                "Creazione snapshot di sicurezza su LVM/ZFS",
-                "Esecuzione migrazione disco verso il nuovo storage",
-                "Verifica avvio e integrità servizi sul container migrato"
-            ]
-        elif any(kw in task_lower for kw in ["lista", "ispeziona", "controlla", "container"]):
-            plan_steps = [
-                f"Acquisizione inventario e stato real-time dei container per '{task}'",
-                "Verifica delle risorse allocate (CPU, RAM, Disco)",
-                "Generazione del report diagnostico completo per l'utente"
-            ]
+        if any(kw in task_lower for kw in ["lista", "ispeziona", "controlla"]):
+            plan_structure = {
+                "steps": [
+                    {
+                        "id": 1,
+                        "description": "Acquisizione inventario e stato real-time dei container",
+                        "tool": "proxmox-mcp__list_containers",
+                        "args": {},
+                        "depends_on": None,
+                        "output_var": "containers_list"
+                    }
+                ]
+            }
         else:
-            plan_steps = [
-                f"Verificare disponibilità risorse e allocare VMID per '{task}'",
-                "Assegnare IP statico libero tramite modulo IPAM",
-                "Configurare record DNS Pi-hole per la risoluzione dominio",
-                "Creare Host Proxy su Nginx Proxy Manager (NPM) con certificato SSL",
-                "Creare, avviare e bootstrappare il container LXC tramite Agy"
-            ]
+            plan_structure = {
+                "steps": [
+                    {
+                        "id": 1,
+                        "description": "Allocazione IP libero da IPAM",
+                        "tool": "proxmox-mcp__allocate_ip",
+                        "args": {"hostname": "test-service"},
+                        "depends_on": None,
+                        "output_var": "allocated_ip"
+                    },
+                    {
+                        "id": 2,
+                        "description": "Creazione LXC da template base",
+                        "tool": "proxmox-mcp__create_lxc_from_template",
+                        "args": {
+                            "key": "base",
+                            "ip": "{{allocated_ip}}",
+                            "hostname": "test-service"
+                        },
+                        "depends_on": 1,
+                        "output_var": "created_vmid"
+                    },
+                    {
+                        "id": 3,
+                        "description": "Creazione record DNS Pi-hole",
+                        "tool": "proxmox-mcp__add_pihole_dns_record",
+                        "args": {
+                            "domain": "test-service.home.lab",
+                            "target_ip": "{{allocated_ip}}"
+                        },
+                        "depends_on": 1,
+                        "output_var": None
+                    },
+                    {
+                        "id": 4,
+                        "description": "Configurazione Host Proxy Nginx Manager",
+                        "tool": "proxmox-mcp__create_npm_proxy_host",
+                        "args": {
+                            "domain": "test-service.home.lab",
+                            "forward_ip": "{{allocated_ip}}",
+                            "forward_port": 80
+                        },
+                        "depends_on": 2,
+                        "output_var": None
+                    }
+                ]
+            }
+
+    if not plan_steps:
+        plan_steps = [s.get("description", "") for s in plan_structure.get("steps", []) if s.get("description")]
 
     formatted_steps_str = "\n".join(f"{i+1}. {step}" for i, step in enumerate(plan_steps))
     formatted_plan = f"Piano multi-step generato per: '{task}'\n\nPassaggi di esecuzione:\n{formatted_steps_str}"
     formatted_plan += "\n\nNota: Stato 'dry-run' completato. In attesa di conferma per l'esecuzione dei tool in sequenza."
 
-    plan = {"mode": "plan", "tool_needed": False, "multi_step": True, "plan_steps": plan_steps}
-    return {"plan": plan, "final_response": formatted_plan}
+    plan = {
+        "mode": "plan",
+        "tool_needed": False,
+        "multi_step": True,
+        "plan_steps": plan_steps,
+        "plan_structure": plan_structure
+    }
+
+    if state.get("execute"):
+        return execute_plan_node(state)
+
+    return {"plan": plan, "plan_structure": plan_structure, "final_response": formatted_plan}
 
 def _format_tool_result(tool_name: str, result: Any) -> str:
     if isinstance(result, dict) and "error" in result:

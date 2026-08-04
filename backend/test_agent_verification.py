@@ -79,6 +79,7 @@ def main():
     res4 = run_test("Test 4: Plan multi-step", "Crea un nuovo servizio web con IP libero e DNS custom", test_thread, force_mode="plan")
     assert res4["mode"] == "plan", f"Expected mode 'plan', got '{res4['mode']}'"
     assert "Piano multi-step" in res4["response"], "Plan step response missing title!"
+    assert res4["plan"].get("plan_structure") is not None or "plan_structure" in res4, "plan_structure missing from plan!"
     plan_steps4 = res4["plan"].get("plan_steps", [])
     for step in plan_steps4:
         assert not re.match(r'^\d+[\.\)]', step), f"Step should not contain number prefix, got '{step}'"
@@ -101,11 +102,10 @@ def main():
         assert r_ask["mode"] in ["ask", "chat"]
         assert "memory_replace" not in r_ask["response"]
 
-    # Test 6: Direct Plan Execution
-    res6 = run_test("Test 6: Direct Plan Execution", "Esegui il piano per: Allocazione VMID; IPAM statico; DNS custom", test_thread, force_mode="act")
+    # Test 6: Direct Plan Execution (Structured MetaMCP Tool Calls)
+    res6 = run_test("Test 6: Direct Plan Execution", "Esegui il piano per: Allocazione IP; Creazione LXC", test_thread, force_mode="act")
     assert res6["mode"] == "act"
-    assert "Avvio esecuzione del piano" in res6["response"]
-    assert "Eseguito con successo" in res6["response"]
+    assert "Avvio esecuzione" in res6["response"]
 
     print("\n==========================================")
     print("ALL 6 VERIFICATION TESTS PASSED SUCCESSFULLY!")

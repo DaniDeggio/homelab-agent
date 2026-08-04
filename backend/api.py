@@ -58,13 +58,15 @@ def run_agent_flow(task: str, thread_id: Optional[str], force_mode: Optional[str
         tool_used = plan_dict.get("tool_name") if isinstance(plan_dict, dict) else None
         
         plan_steps = plan_dict.get("plan_steps") if isinstance(plan_dict, dict) else None
+        plan_structure = final_state.get("plan_structure") or (plan_dict.get("plan_structure") if isinstance(plan_dict, dict) else None)
             
         return ChatResponse(
             thread_id=thread_id,
             mode=mode,
             response=response_text,
             tool_used=tool_used,
-            plan_steps=plan_steps
+            plan_steps=plan_steps,
+            plan_structure=plan_structure
         )
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Graph execution failed: {str(e)}")
