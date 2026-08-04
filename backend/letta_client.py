@@ -185,3 +185,16 @@ def filter_clean_messages(messages: list) -> list:
 
     return clean_msgs
 
+def delete_thread(agent_id: str) -> bool:
+    """Deletes a Letta agent/thread by agent_id."""
+    if not agent_id or not LETTA_URL:
+        return False
+    try:
+        with httpx.Client(follow_redirects=True) as client:
+            r = client.delete(f"{LETTA_URL}/v1/agents/{agent_id}", headers=HEADERS, timeout=DEFAULT_TIMEOUT)
+            return r.status_code in [200, 204]
+    except Exception as e:
+        logger.warning(f"Failed to delete Letta thread {agent_id}: {e}")
+        return False
+
+

@@ -62,3 +62,14 @@ export async function checkHealth(): Promise<{ status: string }> {
   const res = await api.get<{ status: string }>('/health');
   return res.data;
 }
+
+export async function deleteThread(threadId: string): Promise<{ status: string }> {
+  const res = await api.delete<{ status: string }>(`/threads/${encodeURIComponent(threadId)}`);
+  return res.data;
+}
+
+export async function deleteAllThreads(): Promise<{ status: string }> {
+  const res = await api.delete<{ status: string }>('/threads');
+  return res.data;
+}
+

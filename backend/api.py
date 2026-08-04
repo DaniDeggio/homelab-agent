@@ -145,3 +145,37 @@ async def get_thread(thread_id: str):
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to get thread details: {str(e)}")
+
+@api.delete("/v1/threads/{thread_id}", dependencies=[Depends(verify_api_key)])
+async def delete_single_thread(thread_id: str):
+    try:
+        conn = sqlite3.connect(config.CHECKPOINT_DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM checkpoints WHERE thread_id = ?", (thread_id,))
+        deleted_rows = cursor.rowcount
+        conn.commit()
+        conn.close()
+
+        # Delete from Letta if agent exists
+        agent_id = letta_client.create_thread(thread_id)
+        if agent_id:
+            letta_client.delete_thread(agent_id)
+
+        return {"status": "deleted", "thread_id": thread_id, "deleted_checkpoints": deleted_rows}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to delete thread '{thread_id}': {str(e)}")
+
+@api.delete("/v1/threads", dependencies=[Depends(verify_api_key)])
+async def delete_all_threads():
+    try:
+        conn = sqlite3.connect(config.CHECKPOINT_DB_PATH)
+        cursor = conn.cursor()
+        cursor.execute("DELETE FROM checkpoints")
+        deleted_rows = cursor.rowcount
+        conn.commit()
+        conn.close()
+
+        return {"status": "cleared", "deleted_checkpoints": deleted_rows}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to clear threads: {str(e)}")
+

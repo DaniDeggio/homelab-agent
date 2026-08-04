@@ -3,7 +3,14 @@ import { ThreadList } from './ThreadList';
 import { Chat } from './Chat';
 import type { MessageItem } from './Chat';
 import { ToolLog } from './ToolLog';
-import { listThreads, sendMessage, checkHealth, getThreadDetails } from './api';
+import {
+  listThreads,
+  sendMessage,
+  checkHealth,
+  getThreadDetails,
+  deleteThread as deleteThreadApi,
+  deleteAllThreads as deleteAllThreadsApi,
+} from './api';
 import type { ThreadItem, LettaMessage } from './api';
 
 export function App() {
@@ -83,7 +90,6 @@ export function App() {
         const parsedMsgs = parseLettaMessages(details.letta_messages);
         setThreadMessagesMap((prev) => {
           const existing = prev[threadId] || [];
-          // Keep local optimistic messages if history from server is empty
           if (parsedMsgs.length > 0 || existing.length === 0) {
             return { ...prev, [threadId]: parsedMsgs };
           }
@@ -153,6 +159,48 @@ export function App() {
     setError(null);
     loadThreadHistory(id);
     setIsMobileSidebarOpen(false);
+  };
+
+  // Handle Delete Single Thread
+  const handleDeleteThread = async (threadId: string) => {
+    try {
+      await deleteThreadApi(threadId);
+      setThreads((prev) => prev.filter((t) => t.thread_id !== threadId));
+      setThreadMessagesMap((prev) => {
+        const copy = { ...prev };
+        delete copy[threadId];
+        return copy;
+      });
+
+      if (currentThreadId === threadId) {
+        const remaining = threads.filter((t) => t.thread_id !== threadId);
+        if (remaining.length > 0) {
+          const nextId = remaining[0].thread_id;
+          setCurrentThreadId(nextId);
+          localStorage.setItem('main_agent_current_thread', nextId);
+        } else {
+          setCurrentThreadId(null);
+          localStorage.removeItem('main_agent_current_thread');
+        }
+      }
+    } catch (err: any) {
+      console.error('Failed to delete thread:', err);
+      setError(`Failed to delete thread ${threadId}`);
+    }
+  };
+
+  // Handle Delete All Threads
+  const handleDeleteAllThreads = async () => {
+    try {
+      await deleteAllThreadsApi();
+      setThreads([]);
+      setThreadMessagesMap({});
+      setCurrentThreadId(null);
+      localStorage.removeItem('main_agent_current_thread');
+    } catch (err: any) {
+      console.error('Failed to clear threads:', err);
+      setError('Failed to clear threads');
+    }
   };
 
   // Handle Send Message
@@ -271,6 +319,8 @@ export function App() {
           currentThreadId={currentThreadId}
           onSelectThread={handleSelectThread}
           onNewThread={handleNewThread}
+          onDeleteThread={handleDeleteThread}
+          onDeleteAllThreads={handleDeleteAllThreads}
           onRefresh={() => {
             loadThreads();
             if (currentThreadId) loadThreadHistory(currentThreadId);

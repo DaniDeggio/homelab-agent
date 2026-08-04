@@ -1,12 +1,14 @@
 import React, { useState } from 'react';
 import type { ThreadItem } from './api';
-import { MessageSquare, Plus, Search, RefreshCw, Cpu, X } from 'lucide-react';
+import { MessageSquare, Plus, Search, RefreshCw, Cpu, X, Trash2, AlertTriangle } from 'lucide-react';
 
 interface ThreadListProps {
   threads: ThreadItem[];
   currentThreadId: string | null;
   onSelectThread: (threadId: string) => void;
   onNewThread: () => void;
+  onDeleteThread: (threadId: string) => void;
+  onDeleteAllThreads: () => void;
   onRefresh: () => void;
   isLoading: boolean;
   isBackendHealthy: boolean | null;
@@ -18,12 +20,15 @@ export const ThreadList: React.FC<ThreadListProps> = ({
   currentThreadId,
   onSelectThread,
   onNewThread,
+  onDeleteThread,
+  onDeleteAllThreads,
   onRefresh,
   isLoading,
   isBackendHealthy,
   onCloseMobile,
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
+  const [showConfirmClearAll, setShowConfirmClearAll] = useState(false);
 
   const filteredThreads = threads.filter(t => 
     t.thread_id.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -40,8 +45,18 @@ export const ThreadList: React.FC<ThreadListProps> = ({
     if (onCloseMobile) onCloseMobile();
   };
 
+  const handleDeleteItem = (e: React.MouseEvent, id: string) => {
+    e.stopPropagation();
+    onDeleteThread(id);
+  };
+
+  const handleConfirmClearAll = () => {
+    onDeleteAllThreads();
+    setShowConfirmClearAll(false);
+  };
+
   return (
-    <div className="w-80 bg-slate-900 border-r border-slate-800 flex flex-col h-full shrink-0">
+    <div className="w-80 bg-slate-900 border-r border-slate-800 flex flex-col h-full shrink-0 relative">
       {/* App Header */}
       <div className="p-4 border-b border-slate-800 flex items-center justify-between">
         <div className="flex items-center gap-2.5">
@@ -60,6 +75,15 @@ export const ThreadList: React.FC<ThreadListProps> = ({
         </div>
 
         <div className="flex items-center gap-1">
+          {threads.length > 0 && (
+            <button
+              onClick={() => setShowConfirmClearAll(true)}
+              className="p-1.5 text-slate-400 hover:text-rose-400 hover:bg-slate-800 rounded-md transition"
+              title="Clear all threads"
+            >
+              <Trash2 size={15} />
+            </button>
+          )}
           <button
             onClick={onRefresh}
             disabled={isLoading}
@@ -79,6 +103,30 @@ export const ThreadList: React.FC<ThreadListProps> = ({
           )}
         </div>
       </div>
+
+      {/* Clear All Confirmation Banner */}
+      {showConfirmClearAll && (
+        <div className="p-3 bg-rose-950/80 border-b border-rose-800 flex flex-col gap-2">
+          <div className="flex items-center gap-2 text-xs text-rose-200 font-medium">
+            <AlertTriangle size={15} className="text-rose-400 shrink-0" />
+            <span>Delete all threads and history?</span>
+          </div>
+          <div className="flex items-center justify-end gap-2 text-xs">
+            <button
+              onClick={() => setShowConfirmClearAll(false)}
+              className="px-2.5 py-1 text-slate-300 hover:bg-slate-800 rounded transition"
+            >
+              Cancel
+            </button>
+            <button
+              onClick={handleConfirmClearAll}
+              className="px-2.5 py-1 bg-rose-600 hover:bg-rose-500 text-white font-medium rounded transition shadow-sm"
+            >
+              Clear All
+            </button>
+          </div>
+        </div>
+      )}
 
       {/* New Thread Action */}
       <div className="p-3">
@@ -115,10 +163,10 @@ export const ThreadList: React.FC<ThreadListProps> = ({
           filteredThreads.map((thread) => {
             const isSelected = thread.thread_id === currentThreadId;
             return (
-              <button
+              <div
                 key={thread.thread_id}
                 onClick={() => handleSelect(thread.thread_id)}
-                className={`w-full text-left p-2.5 rounded-lg border transition flex flex-col gap-1 ${
+                className={`w-full text-left p-2.5 rounded-lg border transition flex flex-col gap-1 cursor-pointer group relative ${
                   isSelected
                     ? 'bg-slate-800/90 border-blue-500/40 text-slate-100 shadow-sm'
                     : 'bg-slate-900/50 border-slate-800/60 text-slate-300 hover:bg-slate-800/50 hover:border-slate-700'
@@ -129,18 +177,27 @@ export const ThreadList: React.FC<ThreadListProps> = ({
                     <MessageSquare size={14} className={isSelected ? 'text-blue-400' : 'text-slate-400'} />
                     <span className="truncate">{thread.thread_id}</span>
                   </div>
-                  {thread.checkpoint_count > 0 && (
-                    <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 font-mono">
-                      {thread.checkpoint_count}
-                    </span>
-                  )}
+                  <div className="flex items-center gap-1">
+                    {thread.checkpoint_count > 0 && (
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-slate-800 text-slate-400 font-mono">
+                        {thread.checkpoint_count}
+                      </span>
+                    )}
+                    <button
+                      onClick={(e) => handleDeleteItem(e, thread.thread_id)}
+                      className="opacity-0 group-hover:opacity-100 p-1 text-slate-500 hover:text-rose-400 hover:bg-slate-800 rounded transition"
+                      title="Delete thread"
+                    >
+                      <Trash2 size={13} />
+                    </button>
+                  </div>
                 </div>
                 {thread.last_message && (
                   <p className="text-[11px] text-slate-400 truncate pl-5">
                     {thread.last_message}
                   </p>
                 )}
-              </button>
+              </div>
             );
           })
         )}
