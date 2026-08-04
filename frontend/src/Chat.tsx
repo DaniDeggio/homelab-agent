@@ -234,6 +234,17 @@ export const Chat: React.FC<ChatProps> = ({
                           </li>
                         ))}
                       </ol>
+                      {msg.sender === 'assistant' && (
+                        <button
+                          type="button"
+                          disabled={isLoading}
+                          onClick={() => onSendMessage(`Esegui il piano per: ${msg.plan_steps?.join('; ') || ''}`, 'act', true)}
+                          className="mt-2.5 inline-flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white rounded-lg text-xs font-medium transition-colors shadow-sm cursor-pointer"
+                        >
+                          <Play size={12} className="fill-current" />
+                          <span>Avvia Esecuzione Piano</span>
+                        </button>
+                      )}
                     </div>
                   )}
                 </div>

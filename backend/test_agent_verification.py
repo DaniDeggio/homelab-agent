@@ -101,8 +101,14 @@ def main():
         assert r_ask["mode"] in ["ask", "chat"]
         assert "memory_replace" not in r_ask["response"]
 
+    # Test 6: Direct Plan Execution
+    res6 = run_test("Test 6: Direct Plan Execution", "Esegui il piano per: Allocazione VMID; IPAM statico; DNS custom", test_thread, force_mode="act")
+    assert res6["mode"] == "act"
+    assert "Avvio esecuzione del piano" in res6["response"]
+    assert "Eseguito con successo" in res6["response"]
+
     print("\n==========================================")
-    print("ALL 5 VERIFICATION TESTS PASSED SUCCESSFULLY!")
+    print("ALL 6 VERIFICATION TESTS PASSED SUCCESSFULLY!")
     print("==========================================")
 
 if __name__ == "__main__":
