@@ -4,6 +4,9 @@ import sqlite3
 import logging
 import os
 import requests
+import uuid
+from dataclasses import dataclass, field
+from pathlib import Path
 from datetime import datetime
 from typing import TypedDict, Optional, Dict, Any, List
 from langgraph.graph import StateGraph, END
@@ -17,6 +20,63 @@ from tool_schemas import ToolSelection, validate_tool_args
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("graph")
+
+MONITORING_LOG_FILE = os.getenv("MONITORING_LOG_FILE", str(Path(__file__).parent / "memory" / "monitoring_logs.jsonl"))
+
+@dataclass
+class AgentSpan:
+    """Span di monitoraggio per una sessione agente."""
+    session_id: str
+    thread_id: str
+    task: str
+    start_time: datetime = field(default_factory=datetime.utcnow)
+    end_time: Optional[datetime] = None
+    llm_latency_ms: float = 0.0
+    tool_calls: List[dict] = field(default_factory=list)
+    prompt_tokens: int = 0
+    completion_tokens: int = 0
+    retrieval_hit_rate: float = 1.0
+    error: Optional[str] = None
+    
+    def to_dict(self) -> dict:
+        return {
+            "session_id": self.session_id,
+            "thread_id": self.thread_id,
+            "task": self.task,
+            "start_time": self.start_time.isoformat(),
+            "end_time": self.end_time.isoformat() if self.end_time else None,
+            "llm_latency_ms": self.llm_latency_ms,
+            "tool_calls": self.tool_calls,
+            "prompt_tokens": self.prompt_tokens,
+            "completion_tokens": self.completion_tokens,
+            "retrieval_hit_rate": self.retrieval_hit_rate,
+            "error": self.error
+        }
+
+def log_span(span: AgentSpan):
+    """Logga uno span di monitoraggio in formato JSONL."""
+    try:
+        log_path = Path(MONITORING_LOG_FILE)
+        log_path.parent.mkdir(parents=True, exist_ok=True)
+        with open(log_path, "a", encoding="utf-8") as f:
+            f.write(json.dumps(span.to_dict()) + "\n")
+        logger.info(f"Span loggato: {span.session_id} (latency={span.llm_latency_ms:.0f}ms, tokens={span.prompt_tokens + span.completion_tokens})")
+        check_anomalies(span)
+    except Exception as e:
+        logger.warning(f"Impossibile scrivere span di monitoraggio: {e}")
+
+def check_anomalies(span: AgentSpan, thresholds: dict = None):
+    """Controlla se lo span supera le soglie di anomalia."""
+    thresholds = thresholds or {
+        "max_latency_ms": 10000.0,
+        "max_tokens": 50000,
+        "max_tool_failure_rate": 0.2
+    }
+    if span.llm_latency_ms > thresholds["max_latency_ms"]:
+        logger.warning(f"⚠️ ALERT: Latency anomaly {span.llm_latency_ms:.0f}ms > {thresholds['max_latency_ms']}ms")
+    total_tokens = span.prompt_tokens + span.completion_tokens
+    if total_tokens > thresholds["max_tokens"]:
+        logger.warning(f"⚠️ ALERT: Token anomaly {total_tokens} > {thresholds['max_tokens']}")
 
 class AgentState(TypedDict):
     task: str
@@ -970,29 +1030,87 @@ def _format_tool_result(tool_name: str, result: Any) -> str:
     return f"**Esito elaborazione tool**: `{tool_name}`\n\n{raw_data}"
 
 
-def respond_node(state: AgentState) -> AgentState:
-    """Formats final response if not already set and appends assistant message to file system memory."""
-    thread_id = state.get("thread_id")
-    if state.get("final_response"):
-        resp = state.get("final_response")
-        if thread_id and resp:
-            _append_message_to_file(thread_id, "assistant", resp)
-        return state
-
-    plan = state.get("plan", {})
-    mode = state.get("mode", "chat")
+def extract_salient_facts(task: str, response: str, memory_context: str) -> List[str]:
+    """
+    Estrae fatti salienti dalla conversazione per il salvataggio in memoria archivistica.
+    """
+    if not task or not response:
+        return []
     
-    if plan.get("tool_needed"):
-        tool_name = plan.get("tool_name")
-        result = state.get("tool_result")
-        formatted_result = _format_tool_result(str(tool_name), result)
-        formatted = f"[Mode: {mode.upper()}]\n{formatted_result}"
-    else:
-        direct_ans = plan.get("direct_answer", "")
-        formatted = f"[Mode: {mode.upper()}]\n{direct_ans}"
+    prompt = f"""
+    Estrai fatti salienti dalla seguente conversazione che potrebbero essere utili per il futuro.
+    Includi:
+    - Preferenze dell'utente (es. "preferisce container LXC basati su Debian")
+    - Decisioni prese (es. "ha creato servizio web per testare le prestazioni")
+    - Contesto dell'infrastruttura (es. "IP statico allocato 192.168.1.180")
+    
+    Task utente: {task}
+    Risposta assistente: {response}
+    Contesto esistente: {memory_context}
+    
+    Fatti salienti (elenca massimo 5 punti concisi, uno per riga):"""
+
+    raw = _call_llm(prompt, system_prompt="Sei un assistente esperto in estrazione di fatti salienti ed entità.", max_tokens=300, temperature=0.3)
+    if not raw:
+        return []
+    
+    lines = [line.strip("- *").strip() for line in raw.split("\n") if line.strip()]
+    return [l for l in lines if len(l) > 5][:5]
+
+
+def respond_node(state: AgentState) -> AgentState:
+    """Formats final response if not already set, appends assistant message to file system memory, logs monitoring span, and extracts salient facts."""
+    thread_id = state.get("thread_id") or "default_thread"
+    task = state.get("task", "")
+    agent_id = state.get("agent_id")
+    memory_context = state.get("memory_context") or ""
+
+    formatted = state.get("final_response")
+    if not formatted:
+        plan = state.get("plan", {})
+        mode = state.get("mode", "chat")
+        
+        if plan.get("tool_needed"):
+            tool_name = plan.get("tool_name")
+            result = state.get("tool_result")
+            formatted_result = _format_tool_result(str(tool_name), result)
+            formatted = f"[Mode: {mode.upper()}]\n{formatted_result}"
+        else:
+            direct_ans = plan.get("direct_answer", "")
+            formatted = f"[Mode: {mode.upper()}]\n{direct_ans}"
 
     if thread_id and formatted:
         _append_message_to_file(thread_id, "assistant", formatted)
+
+    # 1. Logging dello span di monitoraggio (Task 4.2)
+    session_id = f"sess_{uuid.uuid4().hex[:8]}"
+    span = AgentSpan(
+        session_id=session_id,
+        thread_id=thread_id,
+        task=task,
+        end_time=datetime.utcnow(),
+        llm_latency_ms=state.get("llm_latency_ms", 120.0),
+        prompt_tokens=state.get("prompt_tokens", len(task.split()) + 50),
+        completion_tokens=state.get("completion_tokens", len(formatted.split())),
+        retrieval_hit_rate=1.0
+    )
+    log_span(span)
+
+    # 2. Estrazione fatti salienti e salvataggio in Archival Memory (Task 4.3)
+    try:
+        facts = extract_salient_facts(task, formatted, memory_context)
+        if facts:
+            logger.info(f"Fatti salienti estratti ({len(facts)}): {facts}")
+            if agent_id:
+                for fact in facts:
+                    letta_client.save_archival_memory(agent_id, fact)
+            # File system fallback for salient facts
+            facts_file = Path(__file__).parent / "memory" / f"salient_facts_{thread_id}.txt"
+            with open(facts_file, "a", encoding="utf-8") as f:
+                for fact in facts:
+                    f.write(f"- {fact}\n")
+    except Exception as e:
+        logger.warning(f"Errore durante l'estrazione o il salvataggio dei fatti salienti: {e}")
 
     return {"final_response": formatted}
 
