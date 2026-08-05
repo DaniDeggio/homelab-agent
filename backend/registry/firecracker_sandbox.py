@@ -46,9 +46,9 @@ class FirecrackerSandbox:
                 "boot_args": boot_args
             }, timeout=3)
             if res_boot.status_code == 400:
-                # Se la microVM precedente era rimasta attiva, forza il reset
+                # Se la microVM precedente non era terminata pulita, forza il reset del processo su host
                 try:
-                    requests.put(f"{self.api_url}/actions", json={"action_type": "SendCtrlAltDel"}, timeout=2)
+                    self.mcp.call_tool("proxmox-mcp__exec_host_command", {"command": "pkill -9 -f 'firecracker --api-sock'"})
                 except Exception:
                     pass
                 time.sleep(0.6)
