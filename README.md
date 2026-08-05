@@ -1,39 +1,39 @@
 # Homelab Agent (`homelab-agent`)
 
-Agente AI autonomo per la gestione dell'infrastruttura Proxmox VE con orchestrazione MetaMCP, supporto LangGraph, memoria conversazionale ibrida e selezione dinamica dei tool basata su LLM.
+Agente AI autonomo per la gestione dell'infrastruttura Proxmox VE con orchestrazione MetaMCP, supporto LangGraph, memoria conversazionale ibrida, selezione dinamica dei tool e motore di rollback transazionale automatico.
+
+---
+
+## 🔄 Rollback Automatico Transazionale & Declarative Undo Engine (Fase 3)
+
+Sostituito il vecchio sistema di rollback hardcoded con un motore generale e transazionale basato sul pattern **Saga** e **Write-Ahead Logging (WAL)**:
+
+- **Declarative Rollback Schema (`tool_catalog.py`)**:
+  - Ogni tool dichiara la sua azione di compensazione inversa (es. `allocate_ip` ➔ `release_ip`, `create_lxc_from_template` ➔ `stop_container`, `add_pihole_dns_record` ➔ `delete_pihole_dns_record`, `create_npm_proxy_host` ➔ `delete_npm_proxy_host`).
+  - Mappa i template degli argomenti (`rollback_args_template`) con i risultati di esecuzione effettivi (`{{vmid}}`, `{{ip}}`, `{{domain}}`).
+- **Transaction Log & LIFO Undo Stack (`ExecutionLog` in `graph.py`)**:
+  - Ogni step viene registrato su un registro transazionale *prima* dell'esecuzione (WAL pattern).
+  - In caso di fallimento durante l'esecuzione di un piano, il sistema scorre il registro in ordine inverso (LIFO Undo Stack), eseguendo il rollback **esclusivamente per gli step completati con successo**.
+- **Skipping dei Tool Non Reversibili**:
+  - I tool non reversibili (es. `exec_lxc_command`, `list_containers`) vengono identificati e ignorati in sicurezza durante il rollback con warning nei log.
+- **LLM-Based Rollback Planning (Fallback)**:
+  - Se il rollback dichiarativo per alcuni step fallisce o se vi sono operazioni non reversibili, l'LLM genera un piano di rollback manuale contestuale basato sullo stato dell'infrastruttura.
 
 ---
 
 ## 🛠️ Selezione Dinamica dei Tool via LLM (Fase 2)
 
-Sostituito il keyword matching statico con un motore di selezione dinamica dei tool basato su LLM e Structured Output:
-
-- **Catalogo Dinamico con Cache TTL 5m (`tool_catalog.py`)**:
-  - Recupera la lista aggiornata dei tool direttamente dal protocollo SSE/MCP di MetaMCP o dallo schema OpenAPI (`/api/openapi.json`).
-  - Generalizza automaticamente a qualsiasi tool futuro registrato su MetaMCP senza modifiche di codice.
-- **Structured Output e Schema Validation (`tool_schemas.py`)**:
-  - L'LLM produce un modello Pydantic `ToolSelection` (con campi `tool_needed`, `tool_name`, `arguments`, `confidence`, `reasoning`).
-  - Gli argomenti vengono validati tramite `jsonschema` contro lo schema del tool *prima* di effettuare la chiamata reale di rete.
-- **Loop di Self-Correction (`act_graph_node` in `graph.py`)**:
-  - In caso di errore di validazione schema o di esecuzione del tool, il sistema reinietta il messaggio d'errore nell'LLM per correggere gli argomenti (massimo 2 tentativi di riesecuzione).
+- **Catalogo Dinamico con Cache TTL 5m (`tool_catalog.py`)**: Recupera la lista dei tool dal protocollo SSE/MCP o OpenAPI.
+- **Structured Output & Schema Validation (`tool_schemas.py`)**: Modello Pydantic `ToolSelection` con validazione `jsonschema`.
+- **Loop di Self-Correction (`act_graph_node`)**: Iniezione degli errori di validazione per la ri-generazione guidata (fino a 2 retries).
 
 ---
 
 ## 🧠 Architettura della Memoria Conversazionale Ibrida (Fase 1)
 
-L'agente implementa un sistema di memoria multi-livello a tre livelli per garantire prestazioni costanti (<2s per messaggio) anche su conversazioni di 50+ interazioni senza saturazione del contesto:
-
-### Tier 1 — In-Context Memory (Sliding Window + Incremental Summary)
-- **Messaggi recenti (Sliding Window)**: Mantiene gli ultimi 20 messaggi grezzi (`User` + `Assistant`) per garantire massima aderenza al contesto immediato.
-- **Riepilogo incrementale (Summary)**: Quando la conversazione supera i 30 messaggi, gli step precedenti vengono sintetizzati in un riassunto compatto di massimo 5 frasi generato via LLM (`_generate_summary`).
-- **Dimensione contesto**: Bounded a ~2000 token totali.
-
-### Tier 2 — Session-Scoped Archival Memory (Letta)
-- Salvataggio vettoriale e archivistico dei fatti salienti e dei riassunti delle sessioni via `save_archival_memory` e `get_archival_memory`.
-
-### Tier 3 — Cross-Session Append-Only File System Persistence
-- Ogni turno di conversazione (messaggi utente e risposte assistente) viene salvato su file di log locale in formato JSONL (`memory/{thread_id}.jsonl`).
-- Permette il recovery istantaneo e l'audit completo anche in caso di disconnessione o riavvio del servizio.
+- **Tier 1 — In-Context Memory**: Sliding window degli ultimi 20 messaggi + summary incrementale via LLM per conversazioni lunghe (>30 messaggi).
+- **Tier 2 — Session-Scoped Archival Memory**: Integrazione con Letta.
+- **Tier 3 — Cross-Session Persistence**: Log append-only JSONL (`memory/{thread_id}.jsonl`).
 
 ---
 
@@ -41,4 +41,4 @@ L'agente implementa un sistema di memoria multi-livello a tre livelli per garant
 1. **CHAT**: Conversazione naturale con memoria storica sliding window + summary.
 2. **ASK**: Consultazione del catalogo tool (34 tool MetaMCP) e interrogazioni sulla memoria.
 3. **ACT**: Esecuzione dinamica di tool MetaMCP Proxmox guidata da LLM Structured Output con self-correction.
-4. **PLAN**: Generazione di piani multi-step JSON strutturati (`plan_structure`) con ordinamento topologico (`depends_on`), estrazione ricorsiva delle variabili (`extract_output_var`) ed esecuzione con rollback parziale automatico.
+4. **PLAN**: Generazione di piani multi-step JSON strutturati (`plan_structure`) con ordinamento topologico (`depends_on`), estrazione ricorsiva delle variabili ed esecuzione transazionale con **rollback automatico dichiarativo e LIFO undo stack**.
