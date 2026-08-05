@@ -1,6 +1,21 @@
 # Homelab Agent (`homelab-agent`)
 
-Agente AI autonomo per la gestione dell'infrastruttura Proxmox VE con orchestrazione MetaMCP, supporto LangGraph e memoria conversazionale ibrida.
+Agente AI autonomo per la gestione dell'infrastruttura Proxmox VE con orchestrazione MetaMCP, supporto LangGraph, memoria conversazionale ibrida e selezione dinamica dei tool basata su LLM.
+
+---
+
+## 🛠️ Selezione Dinamica dei Tool via LLM (Fase 2)
+
+Sostituito il keyword matching statico con un motore di selezione dinamica dei tool basato su LLM e Structured Output:
+
+- **Catalogo Dinamico con Cache TTL 5m (`tool_catalog.py`)**:
+  - Recupera la lista aggiornata dei tool direttamente dal protocollo SSE/MCP di MetaMCP o dallo schema OpenAPI (`/api/openapi.json`).
+  - Generalizza automaticamente a qualsiasi tool futuro registrato su MetaMCP senza modifiche di codice.
+- **Structured Output e Schema Validation (`tool_schemas.py`)**:
+  - L'LLM produce un modello Pydantic `ToolSelection` (con campi `tool_needed`, `tool_name`, `arguments`, `confidence`, `reasoning`).
+  - Gli argomenti vengono validati tramite `jsonschema` contro lo schema del tool *prima* di effettuare la chiamata reale di rete.
+- **Loop di Self-Correction (`act_graph_node` in `graph.py`)**:
+  - In caso di errore di validazione schema o di esecuzione del tool, il sistema reinietta il messaggio d'errore nell'LLM per correggere gli argomenti (massimo 2 tentativi di riesecuzione).
 
 ---
 
@@ -22,8 +37,8 @@ L'agente implementa un sistema di memoria multi-livello a tre livelli per garant
 
 ---
 
-## 🛠️ Modalità Operative (Grafo LangGraph)
+## ⚙️ Modalità Operative (Grafo LangGraph)
 1. **CHAT**: Conversazione naturale con memoria storica sliding window + summary.
 2. **ASK**: Consultazione del catalogo tool (34 tool MetaMCP) e interrogazioni sulla memoria.
-3. **ACT**: Esecuzione singola di tool MetaMCP Proxmox.
+3. **ACT**: Esecuzione dinamica di tool MetaMCP Proxmox guidata da LLM Structured Output con self-correction.
 4. **PLAN**: Generazione di piani multi-step JSON strutturati (`plan_structure`) con ordinamento topologico (`depends_on`), estrazione ricorsiva delle variabili (`extract_output_var`) ed esecuzione con rollback parziale automatico.
