@@ -45,6 +45,17 @@ class FirecrackerSandbox:
                 "kernel_image_path": self.kernel_path,
                 "boot_args": boot_args
             }, timeout=3)
+            if res_boot.status_code == 400:
+                # Se la microVM precedente era rimasta attiva, forza il reset
+                try:
+                    requests.put(f"{self.api_url}/actions", json={"action_type": "SendCtrlAltDel"}, timeout=2)
+                except Exception:
+                    pass
+                time.sleep(0.6)
+                res_boot = requests.put(f"{self.api_url}/boot-source", json={
+                    "kernel_image_path": self.kernel_path,
+                    "boot_args": boot_args
+                }, timeout=3)
             res_boot.raise_for_status()
 
             res_root = requests.put(f"{self.api_url}/drives/rootfs", json={
