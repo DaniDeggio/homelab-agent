@@ -12,6 +12,8 @@ from mcp_client import MetaMCPClient
 import letta_client
 import router
 import config
+from tool_catalog import get_tool_catalog, format_catalog_for_prompt
+from tool_schemas import ToolSelection, validate_tool_args
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("graph")
@@ -122,6 +124,51 @@ def _call_llm(prompt: str, system_prompt: str = None, max_tokens: int = 600, tem
     except Exception as e:
         logger.warning(f"LLM completion call failed: {e}")
     return ""
+
+def _call_llm_structured(prompt: str, system_prompt: str, schema_cls: Any, max_tokens: int = 500, temperature: float = 0.0, max_retries: int = 3) -> Optional[Any]:
+    """
+    Chiama l'LLM richiedendo output conforme allo schema Pydantic.
+    Effettua parsing + validazione con retry mirato ed iniezione dell'errore.
+    """
+    json_schema = schema_cls.model_json_schema()
+    schema_prompt = (
+        f"{system_prompt}\n\n"
+        f"Rispondi ESCLUSIVAMENTE con un JSON valido conforme a questo JSON Schema:\n"
+        f"{json.dumps(json_schema, ensure_ascii=False)}\n\n"
+        f"Non aggiungere testo fuori dal JSON."
+    )
+
+    last_error = None
+    for attempt in range(1, max_retries + 1):
+        current_prompt = prompt
+        if last_error:
+            current_prompt = (
+                f"{prompt}\n\n"
+                f"ATTENZIONE: il tentativo precedente ha fallito la validazione con questo errore:\n"
+                f"{last_error}\n"
+                f"Correggi e rispondi di nuovo SOLO con il JSON valido."
+            )
+
+        raw = _call_llm(current_prompt, system_prompt=schema_prompt, max_tokens=max_tokens, temperature=temperature)
+        if not raw:
+            last_error = "Nessuna risposta dal modello LLM"
+            continue
+
+        clean = raw.strip()
+        clean = re.sub(r'^```(?:json)?', '', clean)
+        clean = re.sub(r'```$', '', clean).strip()
+
+        try:
+            parsed = json.loads(clean)
+            validated = schema_cls.model_validate(parsed)
+            logger.info(f"Structured output valido al tentativo {attempt}: {validated.model_dump()}")
+            return validated
+        except Exception as e:
+            last_error = str(e)
+            logger.warning(f"Tentativo {attempt}/{max_retries} fallito nella validazione structured output: {e}")
+
+    logger.error(f"Structured output fallito dopo {max_retries} tentativi. Ultimo errore: {last_error}")
+    return None
 
 def _format_metamcp_tools_catalog() -> str:
     tools_by_cat = {
@@ -541,47 +588,93 @@ def act_graph_node(state: AgentState) -> AgentState:
         plan = {"mode": "act", "tool_needed": False, "direct_answer": ans}
         return {"plan": plan}
 
-    if any(kw in task_lower for kw in ["lista container", "container attivi", "elenco container", "lista dei container", "list_containers", "tutti i container"]):
-        tool_name = "proxmox-mcp__list_containers"
-        arguments = {}
-    elif any(kw in task_lower for kw in ["stato", "status", "container"]) and any(word.isdigit() for word in task_lower.split()):
-        vmid = None
-        for word in task_lower.split():
-            if word.isdigit():
-                vmid = int(word)
+    # --- NUOVA LOGICA: selezione dinamica LLM-based del tool ---
+    tools = get_tool_catalog()
+    catalog_str = format_catalog_for_prompt(tools)
+    memory_context = state.get("memory_context") or ""
+
+    system_prompt = (
+        "Sei l'Agente AI dell'Homelab Proxmox VE. Il tuo compito è selezionare il tool più adatto "
+        "dal catalogo per soddisfare la richiesta dell'utente, ed estrarre gli argomenti corretti.\n\n"
+        f"Catalogo tool disponibili:\n{catalog_str}\n\n"
+        f"Contesto conversazione:\n{memory_context}\n\n"
+        "Se nessun tool è necessario o la richiesta è troppo vaga o irrilevante, imposta tool_needed=false."
+    )
+
+    selection = _call_llm_structured(
+        prompt=task,
+        system_prompt=system_prompt,
+        schema_cls=ToolSelection,
+        max_tokens=400,
+        temperature=0.0,
+        max_retries=3
+    )
+
+    if not selection or not selection.tool_needed or not selection.tool_name:
+        ans = selection.reasoning if selection and selection.reasoning else f"Non ho trovato un tool adatto per la richiesta: '{task}'. Puoi specificare meglio la tua richiesta?"
+        plan = {"mode": "act", "tool_needed": False, "direct_answer": ans}
+        return {"plan": plan}
+
+    tool_name = selection.tool_name
+    arguments = selection.arguments
+    max_exec_retries = 2
+    result = None
+    last_exec_error = None
+
+    for attempt in range(1, max_exec_retries + 1):
+        # 1. Validazione schema argomenti PRIMA di chiamare il tool
+        val_error = validate_tool_args(tool_name, arguments, tools)
+        if val_error:
+            last_exec_error = val_error
+            logger.warning(f"Validazione schema argomenti fallita per {tool_name} (tentativo {attempt}): {val_error}")
+            if attempt < max_exec_retries:
+                correction = _call_llm_structured(
+                    prompt=f"La chiamata al tool '{tool_name}' con argomenti {arguments} ha fallito la validazione dello schema: {val_error}. Correggi gli argomenti per soddisfare la richiesta originale: '{task}'.",
+                    system_prompt=system_prompt,
+                    schema_cls=ToolSelection,
+                    max_tokens=400,
+                    temperature=0.0,
+                    max_retries=2
+                )
+                if correction and correction.tool_name:
+                    tool_name = correction.tool_name
+                    arguments = correction.arguments
+                continue
+
+        # 2. Esecuzione reale del tool
+        try:
+            result = client.call_tool(tool_name, arguments)
+            if isinstance(result, dict) and "error" in result:
+                last_exec_error = result["error"]
+                logger.warning(f"Tool {tool_name} ha risposto con errore (tentativo {attempt}): {last_exec_error}")
+                if attempt < max_exec_retries:
+                    correction = _call_llm_structured(
+                        prompt=f"Il tool '{tool_name}' è stato chiamato con argomenti {arguments} ma ha fallito con errore: {last_exec_error}. Correggi gli argomenti per la stessa richiesta originale: '{task}'.",
+                        system_prompt=system_prompt,
+                        schema_cls=ToolSelection,
+                        max_tokens=400,
+                        temperature=0.0,
+                        max_retries=2
+                    )
+                    if correction and correction.tool_name:
+                        tool_name = correction.tool_name
+                        arguments = correction.arguments
+                    continue
+            else:
+                last_exec_error = None
                 break
-        if vmid:
-            tool_name = "proxmox-mcp__get_container_status"
-            arguments = {"vmid": vmid}
-        else:
-            tool_name = "proxmox-mcp__list_containers"
-            arguments = {}
-    elif any(kw in task_lower for kw in ["template", "templates"]):
-        tool_name = "proxmox-mcp__list_templates"
-        arguments = {}
-    elif any(kw in task_lower for kw in ["dns", "record dns", "pihole"]):
-        tool_name = "proxmox-mcp__list_pihole_dns_records"
-        arguments = {}
-    elif any(kw in task_lower for kw in ["proxy", "npm"]):
-        tool_name = "proxmox-mcp__list_npm_proxy_hosts"
-        arguments = {}
-    elif any(kw in task_lower for kw in ["ipam", "riservazioni ip", "ip allocati", "ip liberi"]):
-        tool_name = "proxmox-mcp__list_ip_reservations"
-        arguments = {}
-    else:
-        if "container" in task_lower:
-            tool_name = "proxmox-mcp__list_containers"
-            arguments = {}
-        else:
-            tool_name = "proxmox-mcp__list_templates"
-            arguments = {}
+        except Exception as e:
+            last_exec_error = str(e)
+            logger.error(f"Eccezione chiamando tool {tool_name} (tentativo {attempt}): {e}")
 
-    try:
-        result = client.call_tool(tool_name, arguments)
-    except Exception as e:
-        result = {"error": str(e)}
+    if last_exec_error and (not result or (isinstance(result, dict) and "error" in result)):
+        ans = f"Task: {task}\nTool tentato: `{tool_name}`\nErrore dopo {max_exec_retries} tentativi: {last_exec_error}"
+        plan = {"mode": "act", "tool_needed": True, "tool_name": tool_name, "direct_answer": ans}
+        return {"plan": plan, "tool_result": None}
 
-    plan = {"mode": "act", "tool_needed": True, "tool_name": tool_name, "arguments": arguments}
+    formatted = _format_tool_result(tool_name, result)
+    ans = f"Task: {task}\nTool utilizzato: `{tool_name}` (confidenza: {selection.confidence:.0%})\nRisultato:\n{formatted}"
+    plan = {"mode": "act", "tool_needed": True, "tool_name": tool_name, "direct_answer": ans}
     return {"plan": plan, "tool_result": result}
 
 def plan_graph_node(state: AgentState) -> AgentState:
