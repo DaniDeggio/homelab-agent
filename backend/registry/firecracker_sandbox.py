@@ -28,7 +28,25 @@ class FirecrackerSandbox:
         except requests.RequestException:
             return False
 
-    def execute_code(self, code: str, timeout: int = 10) -> Dict[str, Any]:
+    def _exec_host_cmd(self, cmd: str) -> str:
+        try:
+            res = self.mcp.call_tool("exec_host_command", {"command": cmd})
+            if isinstance(res, dict) and "content" in res:
+                for item in res.get("content", []):
+                    if item.get("type") == "text":
+                        try:
+                            parsed = json.loads(item.get("text", ""))
+                            if isinstance(parsed, dict):
+                                return parsed.get("stdout", "")
+                        except Exception:
+                            pass
+            elif isinstance(res, dict) and "stdout" in res:
+                return res["stdout"]
+        except Exception as e:
+            logger.warning(f"Errore exec_host_cmd: {e}")
+        return ""
+
+    def execute_code(self, code: str, timeout: int = 15) -> Dict[str, Any]:
         """
         Esegue codice Python in una microVM Firecracker reale col Guest Runner.
         Se l'infrastruttura o l'API falliscono, ricorre al fallback locale con sandboxed=False.
@@ -38,7 +56,7 @@ class FirecrackerSandbox:
             return self._execute_fallback(code, timeout=timeout)
 
         run_id = str(uuid.uuid4())[:8]
-        payload_file_host = f"/tmp/fc_payload_{run_id}.raw"
+        payload_file_host = f"/opt/firecracker/fc_payload_{run_id}.raw"
 
         try:
             # 1. Prepariamo il payload block device (/dev/vdb) sull'host
@@ -50,7 +68,7 @@ class FirecrackerSandbox:
                 f"truncate -s 1M {payload_file_host} && "
                 f"echo '{b64_payload_file}' | base64 -d | dd of={payload_file_host} conv=notrunc"
             )
-            self.mcp.call_tool("exec_host_command", {"command": create_cmd})
+            self._exec_host_cmd(create_cmd)
 
             # 2. Configurazione VM via API REST
             boot_args = "console=ttyS0 quiet panic=1 pci=off init=/usr/local/bin/guest_runner.sh"
@@ -89,18 +107,14 @@ class FirecrackerSandbox:
             
             while time.time() - start_time < timeout:
                 time.sleep(0.3)
-                read_res = self.mcp.call_tool("exec_host_command", {
-                    "command": f"cat {payload_file_host} | tr -d '\\000'"
-                })
-                if read_res and isinstance(read_res, dict) and "stdout" in read_res:
-                    out = read_res["stdout"]
-                    if "<<<RESULT_START>>>" in out and "<<<RESULT_END>>>" in out:
-                        s_idx = out.find("<<<RESULT_START>>>") + len("<<<RESULT_START>>>")
-                        e_idx = out.find("<<<RESULT_END>>>")
-                        b64_json = out[s_idx:e_idx].strip()
-                        res_json_str = base64.b64decode(b64_json).decode("utf-8")
-                        res_data = json.loads(res_json_str)
-                        break
+                out = self._exec_host_cmd(f"cat {payload_file_host} | tr -d '\\000'")
+                if "<<<RESULT_START>>>" in out and "<<<RESULT_END>>>" in out:
+                    s_idx = out.find("<<<RESULT_START>>>") + len("<<<RESULT_START>>>")
+                    e_idx = out.find("<<<RESULT_END>>>")
+                    b64_json = out[s_idx:e_idx].strip()
+                    res_json_str = base64.b64decode(b64_json).decode("utf-8")
+                    res_data = json.loads(res_json_str)
+                    break
 
             if not res_data:
                 logger.warning("Timeout risposta microVM Firecracker. Uso fallback.")
@@ -119,7 +133,7 @@ class FirecrackerSandbox:
         finally:
             # Cleanup file temporaneo sull'host
             try:
-                self.mcp.call_tool("exec_host_command", {"command": f"rm -f {payload_file_host}"})
+                self._exec_host_cmd(f"rm -f {payload_file_host}")
             except Exception:
                 pass
 
