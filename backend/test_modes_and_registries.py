@@ -8,6 +8,7 @@ from mode_policy import get_mode_policy, DEFAULT_MODE_POLICIES
 from registry.manager import get_registry_manager
 from registry.web_search import WebSearchRegistry
 from registry.code_exec import CodeExecRegistry
+from registry.firecracker_sandbox import FirecrackerSandbox
 from agent_loop import run_agent_loop
 
 class TestModesAndRegistries(unittest.TestCase):
