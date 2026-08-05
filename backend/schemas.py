@@ -14,6 +14,8 @@ class ChatResponse(BaseModel):
     tool_used: Optional[str] = None
     plan_steps: Optional[List[str]] = None
     plan_structure: Optional[Dict[str, Any]] = None
+    execution_trace: Optional[List[Dict[str, Any]]] = None
+
 
 class ThreadSummary(BaseModel):
     thread_id: str

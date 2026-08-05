@@ -4,6 +4,7 @@ import { Wrench, ListChecks, Activity, ShieldCheck, ChevronRight, Zap, X, Info }
 interface ToolLogProps {
   toolUsed?: string;
   planSteps?: string[];
+  executionTrace?: any[];
   mode?: string;
   isOpen: boolean;
   onToggle: () => void;
@@ -13,12 +14,14 @@ interface ToolLogProps {
 export const ToolLog: React.FC<ToolLogProps> = ({
   toolUsed,
   planSteps,
+  executionTrace,
   mode,
   isOpen,
   onToggle,
   onCloseMobile,
 }) => {
-  const hasContent = Boolean(toolUsed || (planSteps && planSteps.length > 0) || mode);
+  const hasContent = Boolean(toolUsed || (planSteps && planSteps.length > 0) || (executionTrace && executionTrace.length > 0) || mode);
+
 
   return (
     <div className={`border-l border-slate-800 bg-slate-900 flex flex-col transition-all duration-300 ${isOpen ? 'w-80' : 'w-12'}`}>
@@ -81,6 +84,36 @@ export const ToolLog: React.FC<ToolLogProps> = ({
             )}
           </div>
 
+          {/* Execution Trace Card */}
+          {executionTrace && executionTrace.length > 0 && (
+            <div className="bg-slate-950 border border-slate-800 rounded-xl p-3.5 space-y-3">
+              <div className="flex items-center gap-2 text-slate-400 text-xs">
+                <Activity size={14} className="text-cyan-400" />
+                <span className="font-medium text-slate-300">Execution Trace</span>
+              </div>
+              <div className="space-y-2">
+                {executionTrace.map((tr, idx) => (
+                  <div
+                    key={idx}
+                    className="p-2.5 bg-slate-900/80 border border-slate-800 rounded-lg text-xs text-slate-200 flex flex-col gap-1"
+                  >
+                    <div className="flex items-center justify-between font-mono text-[11px] text-cyan-300">
+                      <span>Step {tr.step_id || idx + 1}: {tr.tool_name}</span>
+                      <span className={tr.error ? "text-red-400" : "text-emerald-400"}>
+                        {tr.error ? "ERROR" : "OK"}
+                      </span>
+                    </div>
+                    {tr.args && (
+                      <div className="text-[10px] font-mono text-slate-400 truncate">
+                        Args: {JSON.stringify(tr.args)}
+                      </div>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </div>
+          )}
+
           {/* Multi-step Plan Card */}
           <div className="bg-slate-950 border border-slate-800 rounded-xl p-3.5 space-y-3">
             <div className="flex items-center gap-2 text-slate-400 text-xs">
@@ -105,6 +138,7 @@ export const ToolLog: React.FC<ToolLogProps> = ({
               <p className="text-xs text-slate-500 italic">No multi-step plan active.</p>
             )}
           </div>
+
 
           {!hasContent && (
             <div className="text-center py-8 text-xs text-slate-500">

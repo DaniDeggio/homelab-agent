@@ -34,8 +34,10 @@ export function App() {
   // Diagnostic states for ToolLog sidebar
   const [activeTool, setActiveTool] = useState<string | undefined>(undefined);
   const [activePlan, setActivePlan] = useState<string[] | undefined>(undefined);
+  const [activeExecutionTrace, setActiveExecutionTrace] = useState<any[] | undefined>(undefined);
   const [activeMode, setActiveMode] = useState<string | undefined>(undefined);
   const [isToolLogOpen, setIsToolLogOpen] = useState<boolean>(true);
+
 
   // Check Backend Health
   const verifyHealth = useCallback(async () => {
@@ -194,9 +196,11 @@ export function App() {
     setThreadMessagesMap((prev) => ({ ...prev, [newId]: [] }));
     setActiveTool(undefined);
     setActivePlan(undefined);
+    setActiveExecutionTrace(undefined);
     setActiveMode(undefined);
     setIsMobileSidebarOpen(false);
   };
+
 
   // Handle Thread selection
   const handleSelectThread = (id: string) => {
@@ -318,7 +322,9 @@ export function App() {
       // Update ToolLog diagnostics
       setActiveTool(response.tool_used);
       setActivePlan(response.plan_steps);
+      setActiveExecutionTrace(response.execution_trace);
       setActiveMode(response.mode);
+
 
       // Refresh threads list sidebar
       loadThreads();
@@ -405,11 +411,13 @@ export function App() {
         <ToolLog
           toolUsed={activeTool}
           planSteps={activePlan}
+          executionTrace={activeExecutionTrace}
           mode={activeMode}
           isOpen={isToolLogOpen}
           onToggle={() => setIsToolLogOpen(!isToolLogOpen)}
           onCloseMobile={() => setIsMobileToolLogOpen(false)}
         />
+
       </div>
     </div>
   );

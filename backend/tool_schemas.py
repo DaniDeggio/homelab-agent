@@ -1,6 +1,9 @@
 from pydantic import BaseModel, Field
 from typing import Optional, Dict, Any, List
-import jsonschema
+try:
+    import jsonschema
+except ImportError:
+    jsonschema = None
 import logging
 
 logger = logging.getLogger("tool_schemas")
@@ -25,6 +28,14 @@ def validate_tool_args(tool_name: str, arguments: dict, tools_catalog: List[dict
     if not isinstance(schema, dict) or "properties" not in schema:
         return None
 
+    if jsonschema is None:
+        # Fallback se jsonschema non è installato
+        reqs = schema.get("required", [])
+        for r in reqs:
+            if r not in (arguments or {}):
+                return f"Parametro richiesto '{r}' mancante per '{tool_name}'"
+        return None
+
     try:
         jsonschema.validate(instance=arguments or {}, schema=schema)
         return None
@@ -32,3 +43,4 @@ def validate_tool_args(tool_name: str, arguments: dict, tools_catalog: List[dict
         err_msg = f"Validazione schema fallita per '{tool_name}': {e.message}"
         logger.warning(err_msg)
         return err_msg
+

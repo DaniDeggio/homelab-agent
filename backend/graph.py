@@ -17,6 +17,8 @@ import router
 import config
 from tool_catalog import get_tool_catalog, format_catalog_for_prompt, get_rollback_info
 from tool_schemas import ToolSelection, validate_tool_args
+from agent_loop import run_agent_loop
+
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("graph")
@@ -89,7 +91,9 @@ class AgentState(TypedDict):
     plan: Dict[str, Any]
     plan_structure: Optional[Dict[str, Any]]
     tool_result: Optional[Any]
+    execution_trace: Optional[List[Dict[str, Any]]]
     final_response: str
+
 
 client = MetaMCPClient(base_url=config.METAMCP_URL, api_key=config.METAMCP_API_KEY)
 conn = sqlite3.connect(config.CHECKPOINT_DB_PATH, check_same_thread=False)
@@ -378,32 +382,28 @@ def chat_graph_node(state: AgentState) -> AgentState:
     return {"plan": plan}
 
 def ask_graph_node(state: AgentState) -> AgentState:
-    """Subgraph for memory & knowledge retrieval queries."""
+    """Subgraph for memory & knowledge retrieval queries (with Web Search & Code Exec tools enabled)."""
     task = state.get("task", "")
     task_lower = task.lower()
     memory_context = state.get("memory_context") or ""
 
     if any(kw in task_lower for kw in ["tool", "strument", "accesso", "cosa puoi fare", "proxmox"]) and ("qual" in task_lower or "quali" in task_lower or "cosa" in task_lower or "lista" in task_lower):
         ans = _format_metamcp_tools_catalog()
-    elif any(kw in task_lower for kw in ["chi sei", "presentati", "chi sei tu"]):
-        ans = "Sono l'agente AI del tuo homelab Proxmox. Posso gestire i container LXC, allocare IP statici con IPAM, gestire record DNS Pi-hole, configurare Nginx Proxy Manager (NPM) e bootstrappare servizi con Agy."
-    elif memory_context and any(kw in task_lower for kw in ["ricord", "storico", "prima", "preferen", "chi sono"]):
-        ans = f"In base alla memoria persisente e allo storico delle conversazioni:\n\n{memory_context}"
-    else:
-        system_prompt = (
-            "Sei l'Agente AI dell'Homelab Proxmox VE. Rispondi in italiano in modo accurato e utile alla query dell'utente. "
-            f"Contesto memoria conversazionale:\n{memory_context}"
-        )
-        llm_ans = _call_llm(task, system_prompt=system_prompt, max_tokens=512, temperature=0.3)
-        if llm_ans:
-            ans = llm_ans
-        elif "preferenza" in task_lower:
-            ans = "In base alle preferenze salvate nella tua memoria persisente: preferisci utilizzare container LXC basati su Debian."
-        else:
-            ans = f"Risposta alla query per '{task}': Sono l'agente AI dell'homelab Proxmox, pronto ad aiutarti con l'infrastruttura ed i tool MetaMCP."
+        return {"plan": {"mode": "ask", "tool_needed": False, "direct_answer": ans}, "final_response": ans}
 
-    plan = {"mode": "ask", "tool_needed": False, "direct_answer": ans}
-    return {"plan": plan}
+    loop_res = run_agent_loop(
+        task=task,
+        mode="ask",
+        memory_context=memory_context,
+        call_llm_fn=_call_llm,
+        call_llm_structured_fn=_call_llm_structured
+    )
+
+    ans = loop_res.get("final_response", "")
+    trace = loop_res.get("execution_trace", [])
+    plan = {"mode": "ask", "tool_needed": len(trace) > 0, "direct_answer": ans, "execution_log": trace}
+    return {"plan": plan, "execution_trace": trace, "final_response": ans}
+
 
 
 def extract_output_var(result: Any, output_var: str, step_id: int) -> Any:
@@ -703,8 +703,8 @@ def execute_plan_node(state: AgentState) -> AgentState:
 
     ans = "\n".join(exec_lines)
     log_dicts = [log.to_dict() for log in execution_log]
-    plan = {"mode": "act", "tool_needed": True, "direct_answer": ans, "plan_structure": plan_struct, "execution_log": log_dicts}
-    return {"plan": plan, "plan_structure": plan_struct, "final_response": ans}
+    return {"plan": plan, "plan_structure": plan_struct, "execution_trace": log_dicts, "final_response": ans}
+
 
 
 def act_graph_node(state: AgentState) -> AgentState:
@@ -742,94 +742,20 @@ def act_graph_node(state: AgentState) -> AgentState:
         plan = {"mode": "act", "tool_needed": False, "direct_answer": ans}
         return {"plan": plan}
 
-    # --- NUOVA LOGICA: selezione dinamica LLM-based del tool ---
-    tools = get_tool_catalog()
-    catalog_str = format_catalog_for_prompt(tools)
     memory_context = state.get("memory_context") or ""
-
-    system_prompt = (
-        "Sei l'Agente AI dell'Homelab Proxmox VE. Il tuo compito è selezionare il tool più adatto "
-        "dal catalogo per soddisfare la richiesta dell'utente, ed estrarre gli argomenti corretti.\n\n"
-        f"Catalogo tool disponibili:\n{catalog_str}\n\n"
-        f"Contesto conversazione:\n{memory_context}\n\n"
-        "Se nessun tool è necessario o la richiesta è troppo vaga o irrilevante, imposta tool_needed=false."
+    loop_res = run_agent_loop(
+        task=task,
+        mode="act",
+        memory_context=memory_context,
+        call_llm_fn=_call_llm,
+        call_llm_structured_fn=_call_llm_structured
     )
 
-    selection = _call_llm_structured(
-        prompt=task,
-        system_prompt=system_prompt,
-        schema_cls=ToolSelection,
-        max_tokens=400,
-        temperature=0.0,
-        max_retries=3
-    )
+    ans = loop_res.get("final_response", "")
+    trace = loop_res.get("execution_trace", [])
+    plan = {"mode": "act", "tool_needed": len(trace) > 0, "direct_answer": ans, "execution_log": trace}
+    return {"plan": plan, "execution_trace": trace, "final_response": ans}
 
-    if not selection or not selection.tool_needed or not selection.tool_name:
-        ans = selection.reasoning if selection and selection.reasoning else f"Non ho trovato un tool adatto per la richiesta: '{task}'. Puoi specificare meglio la tua richiesta?"
-        plan = {"mode": "act", "tool_needed": False, "direct_answer": ans}
-        return {"plan": plan}
-
-    tool_name = selection.tool_name
-    arguments = selection.arguments
-    max_exec_retries = 2
-    result = None
-    last_exec_error = None
-
-    for attempt in range(1, max_exec_retries + 1):
-        # 1. Validazione schema argomenti PRIMA di chiamare il tool
-        val_error = validate_tool_args(tool_name, arguments, tools)
-        if val_error:
-            last_exec_error = val_error
-            logger.warning(f"Validazione schema argomenti fallita per {tool_name} (tentativo {attempt}): {val_error}")
-            if attempt < max_exec_retries:
-                correction = _call_llm_structured(
-                    prompt=f"La chiamata al tool '{tool_name}' con argomenti {arguments} ha fallito la validazione dello schema: {val_error}. Correggi gli argomenti per soddisfare la richiesta originale: '{task}'.",
-                    system_prompt=system_prompt,
-                    schema_cls=ToolSelection,
-                    max_tokens=400,
-                    temperature=0.0,
-                    max_retries=2
-                )
-                if correction and correction.tool_name:
-                    tool_name = correction.tool_name
-                    arguments = correction.arguments
-                continue
-
-        # 2. Esecuzione reale del tool
-        try:
-            result = client.call_tool(tool_name, arguments)
-            if isinstance(result, dict) and "error" in result:
-                last_exec_error = result["error"]
-                logger.warning(f"Tool {tool_name} ha risposto con errore (tentativo {attempt}): {last_exec_error}")
-                if attempt < max_exec_retries:
-                    correction = _call_llm_structured(
-                        prompt=f"Il tool '{tool_name}' è stato chiamato con argomenti {arguments} ma ha fallito con errore: {last_exec_error}. Correggi gli argomenti per la stessa richiesta originale: '{task}'.",
-                        system_prompt=system_prompt,
-                        schema_cls=ToolSelection,
-                        max_tokens=400,
-                        temperature=0.0,
-                        max_retries=2
-                    )
-                    if correction and correction.tool_name:
-                        tool_name = correction.tool_name
-                        arguments = correction.arguments
-                    continue
-            else:
-                last_exec_error = None
-                break
-        except Exception as e:
-            last_exec_error = str(e)
-            logger.error(f"Eccezione chiamando tool {tool_name} (tentativo {attempt}): {e}")
-
-    if last_exec_error and (not result or (isinstance(result, dict) and "error" in result)):
-        ans = f"Task: {task}\nTool tentato: `{tool_name}`\nErrore dopo {max_exec_retries} tentativi: {last_exec_error}"
-        plan = {"mode": "act", "tool_needed": True, "tool_name": tool_name, "direct_answer": ans}
-        return {"plan": plan, "tool_result": None}
-
-    formatted = _format_tool_result(tool_name, result)
-    ans = f"Task: {task}\nTool utilizzato: `{tool_name}` (confidenza: {selection.confidence:.0%})\nRisultato:\n{formatted}"
-    plan = {"mode": "act", "tool_needed": True, "tool_name": tool_name, "direct_answer": ans}
-    return {"plan": plan, "tool_result": result}
 
 def plan_graph_node(state: AgentState) -> AgentState:
     """Subgraph for detailed multi-step planning (simulation/dry-run & JSON plan generation)."""

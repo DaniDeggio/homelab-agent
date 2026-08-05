@@ -20,7 +20,9 @@ export interface ChatResponse {
   response: string;
   tool_used?: string;
   plan_steps?: string[];
+  execution_trace?: any[];
 }
+
 
 export interface ThreadItem {
   thread_id: string;
