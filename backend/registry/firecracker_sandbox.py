@@ -36,7 +36,7 @@ class FirecrackerSandbox:
             return self._execute_fallback(code, timeout=timeout)
 
         try:
-            # 1. Base64 del codice Python
+            # 1. Base64 del codice Python per i boot_args del kernel
             b64_code = base64.b64encode(code.encode("utf-8")).decode("utf-8")
             boot_args = f"console=ttyS0 quiet panic=1 pci=off init=/usr/local/bin/guest_runner.sh b64payload={b64_code}"
 
@@ -46,9 +46,8 @@ class FirecrackerSandbox:
                 "boot_args": boot_args
             }, timeout=3)
             if res_boot.status_code == 400:
-                # Se la microVM precedente non era terminata pulita, forza il reset del processo su host
                 try:
-                    self.mcp.call_tool("proxmox-mcp__exec_host_command", {"command": "pkill -9 -f 'firecracker --api-sock'"})
+                    requests.put(f"{self.api_url}/actions", json={"action_type": "SendCtrlAltDel"}, timeout=2)
                 except Exception:
                     pass
                 time.sleep(0.6)
@@ -71,7 +70,7 @@ class FirecrackerSandbox:
             }, timeout=3)
             res_start.raise_for_status()
 
-            # 3. Attesa risultato leggendo il log/console del server
+            # 3. Attesa del risultato scansionando l'output console HTTP
             start_time = time.time()
             res_data = None
             
