@@ -1,10 +1,15 @@
 import React from 'react';
-import { Wrench, ListChecks, Activity, ShieldCheck, ChevronRight, Zap, X, Info } from 'lucide-react';
+import { Wrench, Activity, ShieldCheck, ChevronRight, Zap, X, Info } from 'lucide-react';
+import type { ExecutionTraceItem, PlanStructure, RollbackAction } from './api';
+import { PlanViewer } from './components/PlanViewer';
+import { ExecutionTraceViewer } from './components/ExecutionTraceViewer';
 
 interface ToolLogProps {
   toolUsed?: string;
   planSteps?: string[];
-  executionTrace?: any[];
+  planStructure?: PlanStructure;
+  executionTrace?: ExecutionTraceItem[];
+  rollbackTrace?: RollbackAction[];
   mode?: string;
   isOpen: boolean;
   onToggle: () => void;
@@ -14,17 +19,25 @@ interface ToolLogProps {
 export const ToolLog: React.FC<ToolLogProps> = ({
   toolUsed,
   planSteps,
+  planStructure,
   executionTrace,
+  rollbackTrace,
   mode,
   isOpen,
   onToggle,
   onCloseMobile,
 }) => {
-  const hasContent = Boolean(toolUsed || (planSteps && planSteps.length > 0) || (executionTrace && executionTrace.length > 0) || mode);
-
+  const hasContent = Boolean(
+    toolUsed ||
+    (planSteps && planSteps.length > 0) ||
+    planStructure ||
+    (executionTrace && executionTrace.length > 0) ||
+    (rollbackTrace && rollbackTrace.length > 0) ||
+    mode
+  );
 
   return (
-    <div className={`border-l border-slate-800 bg-slate-900 flex flex-col transition-all duration-300 ${isOpen ? 'w-80' : 'w-12'}`}>
+    <div className={`border-l border-slate-800 bg-slate-900 flex flex-col transition-all duration-300 ${isOpen ? 'w-80 sm:w-96' : 'w-12'}`}>
       {/* Header / Toggle Button */}
       <div className="p-3 border-b border-slate-800 flex items-center justify-between">
         <button
@@ -49,7 +62,7 @@ export const ToolLog: React.FC<ToolLogProps> = ({
       </div>
 
       {isOpen ? (
-        <div className="flex-1 overflow-y-auto p-4 space-y-5">
+        <div className="flex-1 overflow-y-auto p-4 space-y-4">
           {/* Active Mode Card */}
           {mode && (
             <div className="bg-slate-950 border border-slate-800 rounded-xl p-3.5 space-y-1.5">
@@ -57,7 +70,7 @@ export const ToolLog: React.FC<ToolLogProps> = ({
                 <Zap size={14} className="text-amber-400" />
                 <span className="font-medium text-slate-300">Agent Mode</span>
               </div>
-              <div className="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-mono font-medium bg-blue-500/10 text-blue-400 border border-blue-500/20 uppercase tracking-wide">
+              <div className="inline-flex items-center px-2.5 py-1 rounded-md text-xs font-mono font-bold bg-blue-500/10 text-blue-400 border border-blue-500/20 uppercase tracking-wide">
                 {mode}
               </div>
             </div>
@@ -84,61 +97,19 @@ export const ToolLog: React.FC<ToolLogProps> = ({
             )}
           </div>
 
-          {/* Execution Trace Card */}
-          {executionTrace && executionTrace.length > 0 && (
-            <div className="bg-slate-950 border border-slate-800 rounded-xl p-3.5 space-y-3">
-              <div className="flex items-center gap-2 text-slate-400 text-xs">
-                <Activity size={14} className="text-cyan-400" />
-                <span className="font-medium text-slate-300">Execution Trace</span>
-              </div>
-              <div className="space-y-2">
-                {executionTrace.map((tr, idx) => (
-                  <div
-                    key={idx}
-                    className="p-2.5 bg-slate-900/80 border border-slate-800 rounded-lg text-xs text-slate-200 flex flex-col gap-1"
-                  >
-                    <div className="flex items-center justify-between font-mono text-[11px] text-cyan-300">
-                      <span>Step {tr.step_id || idx + 1}: {tr.tool_name}</span>
-                      <span className={tr.error ? "text-red-400" : "text-emerald-400"}>
-                        {tr.error ? "ERROR" : "OK"}
-                      </span>
-                    </div>
-                    {tr.args && (
-                      <div className="text-[10px] font-mono text-slate-400 truncate">
-                        Args: {JSON.stringify(tr.args)}
-                      </div>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </div>
-          )}
+          {/* Execution Trace Viewer */}
+          <ExecutionTraceViewer
+            trace={executionTrace}
+            rollbackTrace={rollbackTrace}
+            compact={true}
+          />
 
-          {/* Multi-step Plan Card */}
-          <div className="bg-slate-950 border border-slate-800 rounded-xl p-3.5 space-y-3">
-            <div className="flex items-center gap-2 text-slate-400 text-xs">
-              <ListChecks size={14} className="text-indigo-400" />
-              <span className="font-medium text-slate-300">Execution Plan</span>
-            </div>
-            {planSteps && planSteps.length > 0 ? (
-              <div className="space-y-2">
-                {planSteps.map((step, idx) => (
-                  <div
-                    key={idx}
-                    className="p-2.5 bg-slate-900/80 border border-slate-800 rounded-lg text-xs text-slate-200 flex items-start gap-2.5"
-                  >
-                    <span className="flex items-center justify-center w-5 h-5 rounded bg-indigo-500/20 text-indigo-400 font-mono text-[11px] font-bold shrink-0 mt-0.5">
-                      {idx + 1}
-                    </span>
-                    <span className="leading-relaxed">{step}</span>
-                  </div>
-                ))}
-              </div>
-            ) : (
-              <p className="text-xs text-slate-500 italic">No multi-step plan active.</p>
-            )}
-          </div>
-
+          {/* Plan Viewer */}
+          <PlanViewer
+            planSteps={planSteps}
+            planStructure={planStructure}
+            compact={true}
+          />
 
           {!hasContent && (
             <div className="text-center py-8 text-xs text-slate-500">

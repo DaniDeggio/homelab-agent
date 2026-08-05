@@ -1,21 +1,13 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Send, Bot, User, Wrench, ListChecks, Sparkles, AlertTriangle, Play, Menu, Activity } from 'lucide-react';
-
-export interface MessageItem {
-  id: string;
-  sender: 'user' | 'assistant';
-  content: string;
-  timestamp: string;
-  mode?: string;
-  tool_used?: string;
-  plan_steps?: string[];
-  isError?: boolean;
-}
+import { Send, Bot, User, Wrench, Sparkles, AlertTriangle, Play, Menu, Activity } from 'lucide-react';
+import type { FormattedMessage, AgentMode } from './api';
+import { PlanViewer } from './components/PlanViewer';
+import { ExecutionTraceViewer } from './components/ExecutionTraceViewer';
 
 interface ChatProps {
   currentThreadId: string | null;
-  messages: MessageItem[];
-  onSendMessage: (input: string, mode: 'chat' | 'ask' | 'act' | 'plan' | undefined, execute: boolean) => Promise<void>;
+  messages: FormattedMessage[];
+  onSendMessage: (input: string, mode: AgentMode | undefined, execute: boolean) => Promise<void>;
   isLoading: boolean;
   error: string | null;
   onClearError: () => void;
@@ -34,7 +26,7 @@ export const Chat: React.FC<ChatProps> = ({
   onOpenMobileToolLog,
 }) => {
   const [input, setInput] = useState('');
-  const [selectedMode, setSelectedMode] = useState<'chat' | 'ask' | 'act' | 'plan' | 'auto'>('auto');
+  const [selectedMode, setSelectedMode] = useState<AgentMode | 'auto'>('auto');
   const [execute, setExecute] = useState<boolean>(true);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
@@ -72,7 +64,6 @@ export const Chat: React.FC<ChatProps> = ({
       {/* Top Header */}
       <div className="h-14 border-b border-slate-800 bg-slate-900/60 backdrop-blur-md px-3 sm:px-6 flex items-center justify-between z-10 shrink-0">
         <div className="flex items-center gap-2.5">
-          {/* Mobile Hamburger Menu Button */}
           {onOpenMobileSidebar && (
             <button
               onClick={onOpenMobileSidebar}
@@ -114,7 +105,7 @@ export const Chat: React.FC<ChatProps> = ({
             ))}
           </div>
 
-          {/* Mobile Mode Select Dropdown */}
+          {/* Mobile Mode Dropdown */}
           <div className="sm:hidden">
             <select
               value={selectedMode}
@@ -140,7 +131,7 @@ export const Chat: React.FC<ChatProps> = ({
             <span className="text-[10px] sm:text-[11px] hidden xs:inline">Execute</span>
           </label>
 
-          {/* Mobile ToolLog Diagnostics Button */}
+          {/* Mobile Diagnostics Button */}
           {onOpenMobileToolLog && (
             <button
               onClick={onOpenMobileToolLog}
@@ -184,93 +175,90 @@ export const Chat: React.FC<ChatProps> = ({
             </div>
           </div>
         ) : (
-          messages.map((msg) => (
-            <div
-              key={msg.id}
-              className={`flex gap-2.5 sm:gap-3 max-w-3xl ${
-                msg.sender === 'user' ? 'ml-auto flex-row-reverse' : 'mr-auto'
-              }`}
-            >
-              {/* Avatar */}
+          messages.map((msg) => {
+            const isUser = msg.sender === 'user';
+            const modeName = msg.mode?.toLowerCase();
+
+            return (
               <div
-                className={`w-7 h-7 sm:w-8 sm:h-8 rounded-full flex items-center justify-center shrink-0 text-white shadow-sm mt-0.5 ${
-                  msg.sender === 'user'
-                    ? 'bg-blue-600'
-                    : msg.isError
-                    ? 'bg-rose-600'
-                    : 'bg-slate-800 border border-slate-700'
+                key={msg.id}
+                className={`flex gap-2.5 sm:gap-3 max-w-3xl ${
+                  isUser ? 'ml-auto flex-row-reverse' : 'mr-auto'
                 }`}
               >
-                {msg.sender === 'user' ? <User size={14} /> : <Bot size={14} />}
-              </div>
-
-              {/* Message Content Bubble */}
-              <div className="flex flex-col space-y-1.5 max-w-[85vw] sm:max-w-xl">
+                {/* Avatar */}
                 <div
-                  className={`px-3.5 py-2.5 sm:px-4 sm:py-3 rounded-2xl text-xs sm:text-sm leading-relaxed ${
-                    msg.sender === 'user'
-                      ? 'bg-blue-600 text-white rounded-tr-none shadow-md shadow-blue-600/10'
+                  className={`w-7 h-7 sm:w-8 sm:h-8 rounded-full flex items-center justify-center shrink-0 text-white shadow-sm mt-0.5 ${
+                    isUser
+                      ? 'bg-blue-600'
                       : msg.isError
-                      ? 'bg-rose-950/60 border border-rose-800/80 text-rose-200 rounded-tl-none'
-                      : 'bg-slate-900 border border-slate-800 text-slate-100 rounded-tl-none shadow-sm'
+                      ? 'bg-rose-600'
+                      : 'bg-slate-800 border border-slate-700'
                   }`}
                 >
-                  <div className="whitespace-pre-wrap font-sans break-words">{msg.content}</div>
-
-                  {/* Multi-step Plan list embedded in bubble */}
-                  {msg.plan_steps && msg.plan_steps.length > 0 && (
-                    <div className="mt-3 pt-3 border-t border-slate-800 space-y-2">
-                      <div className="flex items-center gap-1.5 text-xs text-indigo-400 font-medium">
-                        <ListChecks size={14} />
-                        <span>Execution Plan ({msg.plan_steps.length} steps):</span>
-                      </div>
-                      <ol className="space-y-1.5 text-xs">
-                        {msg.plan_steps.map((step, idx) => (
-                          <li key={idx} className="flex items-start gap-2 bg-slate-950/60 p-2 rounded-lg border border-slate-800/80">
-                            <span className="font-mono font-bold text-indigo-400 text-[11px] min-w-[18px]">
-                              {idx + 1}.
-                            </span>
-                            <span className="text-slate-300">{step}</span>
-                          </li>
-                        ))}
-                      </ol>
-                      {msg.sender === 'assistant' && (
-                        <button
-                          type="button"
-                          disabled={isLoading}
-                          onClick={() => onSendMessage(`Esegui il piano per: ${msg.plan_steps?.join('; ') || ''}`, 'act', true)}
-                          className="mt-2.5 inline-flex items-center gap-1.5 px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white rounded-lg text-xs font-medium transition-colors shadow-sm cursor-pointer"
-                        >
-                          <Play size={12} className="fill-current" />
-                          <span>Avvia Esecuzione Piano</span>
-                        </button>
-                      )}
-                    </div>
-                  )}
+                  {isUser ? <User size={14} /> : <Bot size={14} />}
                 </div>
 
-                {/* Sub-bubble Meta (Tool Used Badge & Timestamp) */}
-                <div
-                  className={`flex items-center gap-1.5 sm:gap-2 px-1 text-[10px] sm:text-[11px] text-slate-500 ${
-                    msg.sender === 'user' ? 'justify-end' : 'justify-start'
-                  }`}
-                >
-                  <span>{msg.timestamp}</span>
-                  {msg.mode && (
-                    <span className="px-1.5 py-0.5 rounded bg-slate-900 border border-slate-800 font-mono text-[9px] sm:text-[10px] text-slate-400">
-                      {msg.mode}
-                    </span>
-                  )}
-                  {msg.tool_used && (
-                    <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 font-mono text-[9px] sm:text-[10px]">
-                      <Wrench size={10} />
-                      {msg.tool_used}
-                    </span>
-                  )}
+                {/* Message Content Bubble */}
+                <div className="flex flex-col space-y-1.5 max-w-[85vw] sm:max-w-xl">
+                  <div
+                    className={`px-3.5 py-2.5 sm:px-4 sm:py-3 rounded-2xl text-xs sm:text-sm leading-relaxed ${
+                      isUser
+                        ? 'bg-blue-600 text-white rounded-tr-none shadow-md shadow-blue-600/10'
+                        : msg.isError
+                        ? 'bg-rose-950/60 border border-rose-800/80 text-rose-200 rounded-tl-none'
+                        : 'bg-slate-900 border border-slate-800 text-slate-100 rounded-tl-none shadow-sm'
+                    }`}
+                  >
+                    <div className="whitespace-pre-wrap font-sans break-words">{msg.content}</div>
+
+                    {/* Mode Specific Inline Views (Act / Plan / Trace) */}
+                    {!isUser && (
+                      <>
+                        {/* Plan View for Plan Mode */}
+                        {(modeName === 'plan' || (msg.plan_steps && msg.plan_steps.length > 0)) && (
+                          <PlanViewer
+                            planSteps={msg.plan_steps}
+                            planStructure={msg.plan_structure}
+                            onExecutePlan={(summary) => onSendMessage(summary, 'act', true)}
+                            isLoading={isLoading}
+                          />
+                        )}
+
+                        {/* Inline Execution Trace for Act / Ask Modes */}
+                        {(modeName === 'act' || modeName === 'ask') && msg.execution_trace && msg.execution_trace.length > 0 && (
+                          <ExecutionTraceViewer
+                            trace={msg.execution_trace}
+                            rollbackTrace={msg.rollback_trace}
+                          />
+                        )}
+                      </>
+                    )}
+                  </div>
+
+                  {/* Sub-bubble Metadata Badges */}
+                  <div
+                    className={`flex items-center gap-1.5 sm:gap-2 px-1 text-[10px] sm:text-[11px] text-slate-500 ${
+                      isUser ? 'justify-end' : 'justify-start'
+                    }`}
+                  >
+                    <span>{msg.timestamp}</span>
+                    {msg.mode && (
+                      <span className="px-1.5 py-0.5 rounded bg-slate-900 border border-slate-800 font-mono text-[9px] sm:text-[10px] text-slate-400 uppercase">
+                        {msg.mode}
+                      </span>
+                    )}
+                    {msg.tool_used && (
+                      <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full bg-emerald-500/10 border border-emerald-500/20 text-emerald-400 font-mono text-[9px] sm:text-[10px]">
+                        <Wrench size={10} />
+                        {msg.tool_used}
+                      </span>
+                    )}
+                  </div>
                 </div>
               </div>
-            </div>
-          ))
+            );
+          })
         )}
 
         {/* Loading Indicator */}
@@ -301,11 +289,7 @@ export const Chat: React.FC<ChatProps> = ({
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={handleKeyDown}
-            placeholder={
-              currentThreadId
-                ? `Send message...`
-                : 'Send message...'
-            }
+            placeholder="Send message..."
             className="w-full bg-slate-950 border border-slate-800 rounded-xl pl-3.5 pr-11 py-2.5 sm:py-3 text-xs sm:text-sm text-slate-100 placeholder-slate-500 focus:outline-none focus:border-blue-500 focus:ring-1 focus:ring-blue-500 resize-none transition"
           />
           <button
