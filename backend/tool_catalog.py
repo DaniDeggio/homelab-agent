@@ -9,10 +9,68 @@ logger = logging.getLogger("tool_catalog")
 _catalog_cache = {"data": None, "timestamp": 0}
 CACHE_TTL_SECONDS = 300  # 5 minuti
 
+ROLLBACK_DECLARATIONS = {
+    "proxmox-mcp__allocate_ip": {
+        "rollback_tool": "proxmox-mcp__release_ip",
+        "rollback_args_template": {"ip": "{{ip}}"},
+        "reversible": True
+    },
+    "allocate_ip": {
+        "rollback_tool": "proxmox-mcp__release_ip",
+        "rollback_args_template": {"ip": "{{ip}}"},
+        "reversible": True
+    },
+    "proxmox-mcp__create_lxc_from_template": {
+        "rollback_tool": "proxmox-mcp__stop_container",
+        "rollback_args_template": {"vmid": "{{vmid}}"},
+        "reversible": True
+    },
+    "create_lxc_from_template": {
+        "rollback_tool": "proxmox-mcp__stop_container",
+        "rollback_args_template": {"vmid": "{{vmid}}"},
+        "reversible": True
+    },
+    "proxmox-mcp__add_pihole_dns_record": {
+        "rollback_tool": "proxmox-mcp__delete_pihole_dns_record",
+        "rollback_args_template": {"domain": "{{domain}}", "target_ip": "{{target_ip}}"},
+        "reversible": True
+    },
+    "add_pihole_dns_record": {
+        "rollback_tool": "proxmox-mcp__delete_pihole_dns_record",
+        "rollback_args_template": {"domain": "{{domain}}", "target_ip": "{{target_ip}}"},
+        "reversible": True
+    },
+    "proxmox-mcp__create_npm_proxy_host": {
+        "rollback_tool": "proxmox-mcp__delete_npm_proxy_host",
+        "rollback_args_template": {"domain": "{{domain}}"},
+        "reversible": True
+    },
+    "create_npm_proxy_host": {
+        "rollback_tool": "proxmox-mcp__delete_npm_proxy_host",
+        "rollback_args_template": {"domain": "{{domain}}"},
+        "reversible": True
+    },
+    "proxmox-mcp__list_containers": {"reversible": False},
+    "list_containers": {"reversible": False},
+    "proxmox-mcp__exec_lxc_command": {"reversible": False},
+    "exec_lxc_command": {"reversible": False},
+}
+
+def get_rollback_info(tool_name: str) -> dict:
+    """Recupera info di rollback per un tool, se dichiarato."""
+    if not tool_name:
+        return {"reversible": False}
+    if tool_name in ROLLBACK_DECLARATIONS:
+        return ROLLBACK_DECLARATIONS[tool_name]
+    clean_name = tool_name.replace("proxmox-mcp__", "")
+    if clean_name in ROLLBACK_DECLARATIONS:
+        return ROLLBACK_DECLARATIONS[clean_name]
+    return {"reversible": False}
+
 def get_tool_catalog(force_refresh: bool = False) -> list[dict]:
     """
     Recupera il catalogo tool da MetaMCP via list_tools (SSE/REST) o OpenAPI, con cache TTL 5m.
-    Ogni entry: {"name": str, "description": str, "parameters": dict (JSON Schema)}
+    Ogni entry: {"name": str, "description": str, "parameters": dict, "rollback_info": dict}
     """
     now = time.time()
     if not force_refresh and _catalog_cache["data"] and (now - _catalog_cache["timestamp"] < CACHE_TTL_SECONDS):
@@ -51,13 +109,17 @@ def get_tool_catalog(force_refresh: bool = False) -> list[dict]:
             logger.warning(f"Impossibile recuperare OpenAPI da MetaMCP ({e})")
 
     if tools:
+        for t in tools:
+            t["rollback_info"] = get_rollback_info(t.get("name", ""))
         _catalog_cache["data"] = tools
         _catalog_cache["timestamp"] = now
         logger.info(f"Catalogo tool aggiornato: {len(tools)} tool disponibili")
         return tools
 
-    logger.warning("Uso cache/fallback per catalogo tool")
-    return _catalog_cache["data"] or []
+    cached = _catalog_cache["data"] or []
+    for t in cached:
+        t["rollback_info"] = get_rollback_info(t.get("name", ""))
+    return cached
 
 def _parse_openapi_to_tools(openapi: dict) -> list[dict]:
     """Estrae {name, description, parameters} da uno schema OpenAPI."""

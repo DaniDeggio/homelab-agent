@@ -12,7 +12,7 @@ from mcp_client import MetaMCPClient
 import letta_client
 import router
 import config
-from tool_catalog import get_tool_catalog, format_catalog_for_prompt
+from tool_catalog import get_tool_catalog, format_catalog_for_prompt, get_rollback_info
 from tool_schemas import ToolSelection, validate_tool_args
 
 logging.basicConfig(level=logging.INFO)
@@ -415,8 +415,130 @@ def topological_sort_steps(steps: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     return sorted_steps
 
 
+class ExecutionLog:
+    """Transaction log entry per un singolo step (WAL pattern)."""
+    def __init__(self, step: dict, tool_name: str, args: dict):
+        self.step = step
+        self.tool_name = tool_name
+        self.args = args
+        self.result = None
+        self.error = None
+        self.timestamp_start = datetime.utcnow()
+        self.timestamp_end = None
+        self.rollback_executed = False
+        self.rollback_error = None
+    
+    def to_dict(self) -> dict:
+        return {
+            "step_id": self.step.get("id"),
+            "tool_name": self.tool_name,
+            "args": self.args,
+            "result": self.result,
+            "error": self.error,
+            "timestamp_start": self.timestamp_start.isoformat(),
+            "timestamp_end": self.timestamp_end.isoformat() if self.timestamp_end else None,
+            "rollback_executed": self.rollback_executed,
+            "rollback_error": self.rollback_error
+        }
+
+
+def execute_rollback_for_step(log: ExecutionLog, tools_catalog: list[dict]) -> bool:
+    """
+    Esegue il rollback per un singolo step, usando info dichiarative e popolamento template.
+    Ritorna True se successo, False se fallito.
+    """
+    tool_name = log.tool_name
+    result = log.result
+    step_id = log.step.get("id")
+
+    rollback_info = get_rollback_info(tool_name)
+    if not rollback_info or not rollback_info.get("reversible"):
+        logger.warning(f"Step {step_id}: tool `{tool_name}` non è reversibile, impossibile rollback")
+        log.rollback_executed = False
+        log.rollback_error = "Tool non reversibile"
+        return False
+    
+    rollback_tool = rollback_info.get("rollback_tool")
+    rollback_args_template = rollback_info.get("rollback_args_template", {})
+    
+    if not rollback_tool:
+        logger.error(f"Step {step_id}: rollback_info per `{tool_name}` non specifica rollback_tool")
+        log.rollback_executed = False
+        log.rollback_error = "Rollback tool non specificato"
+        return False
+    
+    rollback_args = {}
+    value_map = {}
+    if isinstance(log.args, dict):
+        value_map.update(log.args)
+    if isinstance(result, dict):
+        value_map.update(result)
+        
+    for arg_key, template_val in rollback_args_template.items():
+        if isinstance(template_val, str):
+            val_str = template_val
+            for res_key, res_val in value_map.items():
+                placeholder = f"{{{{{res_key}}}}}"
+                if placeholder in val_str:
+                    val_str = val_str.replace(placeholder, str(res_val))
+            if "{{" in val_str and "}}" in val_str:
+                raw_var = val_str.replace("{", "").replace("}", "").strip()
+                extracted = extract_output_var(result, raw_var, step_id)
+                if extracted is not None:
+                    val_str = str(extracted)
+            rollback_args[arg_key] = val_str
+        else:
+            rollback_args[arg_key] = template_val
+    
+    logger.info(f"Rollback step {step_id}: `{rollback_tool}` con args {rollback_args}")
+    
+    try:
+        rollback_result = client.call_tool(rollback_tool, rollback_args)
+        if isinstance(rollback_result, dict) and "error" in rollback_result:
+            log.rollback_executed = False
+            log.rollback_error = rollback_result["error"]
+            logger.error(f"Rollback fallito per step {step_id}: {rollback_result['error']}")
+            return False
+        else:
+            log.rollback_executed = True
+            logger.info(f"Rollback riuscito per step {step_id}")
+            return True
+    except Exception as e:
+        log.rollback_executed = False
+        log.rollback_error = str(e)
+        logger.error(f"Eccezione nel rollback per step {step_id}: {e}")
+        return False
+
+
+def generate_rollback_plan_with_llm(execution_log: List[ExecutionLog], task: str, error_context: str) -> Optional[str]:
+    """
+    Usa l'LLM per generare un piano di rollback contestuale quando quello dichiarativo non basta.
+    """
+    log_summary = "\n".join([
+        f"- Step {e.step.get('id')}: `{e.tool_name}`({e.args}) → {'OK' if not e.error else 'ERROR: ' + str(e.error)}"
+        for e in execution_log
+    ])
+    
+    prompt = f"""
+    Un piano di esecuzione è fallito dopo questi step:
+    {log_summary}
+    
+    Task originale: {task}
+    Errore: {error_context}
+    
+    Genera un piano di rollback per ripristinare lo stato iniziale.
+    Elenca i passaggi di rollback in ordine inverso, specificando per ciascuno:
+    - Azione da compiere
+    - Tool da usare (se noto, altrimenti lascia come "azione manuale")
+    
+    Piano di rollback:"""
+    
+    plan = _call_llm(prompt, system_prompt="Sei un assistente esperto in rollback di operazioni di infrastruttura Proxmox.", max_tokens=512, temperature=0.3)
+    return plan.strip() if plan else None
+
+
 def execute_plan_node(state: AgentState) -> AgentState:
-    """Executes real MetaMCP tools sequentially based on state['plan_structure']."""
+    """Executes real MetaMCP tools sequentially based on state['plan_structure'] with robust declarative & WAL rollback."""
     task = state.get("task", "")
     plan_struct = state.get("plan_structure") or state.get("plan", {}).get("plan_structure")
     
@@ -427,7 +549,7 @@ def execute_plan_node(state: AgentState) -> AgentState:
     sorted_steps = topological_sort_steps(steps)
     
     context_vars = {}
-    executed_steps = []
+    execution_log: List[ExecutionLog] = []
     exec_lines = [
         f"🚀 **Avvio esecuzione reale del piano MetaMCP**: *'{task}'*\n",
         "### Esito Esecuzione Tool Real-Time:\n"
@@ -445,7 +567,6 @@ def execute_plan_node(state: AgentState) -> AgentState:
 
         logger.info(f"Esecuzione step {step_id} (dipende da: {depends_on}): {tool_name}")
 
-        # Substitute variable placeholders (e.g., {{allocated_ip}})
         resolved_args = {}
         if isinstance(args, dict):
             for k, v in args.items():
@@ -459,97 +580,70 @@ def execute_plan_node(state: AgentState) -> AgentState:
                 else:
                     resolved_args[k] = v
 
+        # Log entry creata PRIMA dell'esecuzione (Write-Ahead Logging / WAL)
+        log_entry = ExecutionLog(step, tool_name, resolved_args)
+        execution_log.append(log_entry)
+
         try:
             result = client.call_tool(tool_name, resolved_args)
+            log_entry.result = result
+            log_entry.timestamp_end = datetime.utcnow()
             logger.info(f"Step {step_id} completato: {result}")
             
             if isinstance(result, dict) and "error" in result:
                 has_error = True
                 err_msg = result["error"]
+                log_entry.error = err_msg
                 exec_lines.append(f"{step_id}. ❌ `{desc}` — Tool `{tool_name}` fallito: `{err_msg}`")
                 break
             
-            # Extract output variable using robust extract_output_var helper
             if output_var:
                 extracted_val = extract_output_var(result, output_var, step_id)
                 if extracted_val is not None:
                     context_vars[output_var] = extracted_val
 
-            executed_steps.append({
-                "step": step,
-                "tool": tool_name,
-                "args": resolved_args,
-                "result": result
-            })
-
             args_str = json.dumps(resolved_args, ensure_ascii=False) if resolved_args else "{}"
             exec_lines.append(f"{step_id}. ✅ `{desc}` — `{tool_name}`({args_str}) → *OK*")
         except Exception as e:
             has_error = True
+            log_entry.error = str(e)
+            log_entry.timestamp_end = datetime.utcnow()
             logger.error(f"Step {step_id} fallito con eccezione: {e}")
             exec_lines.append(f"{step_id}. ❌ `{desc}` — Errore di chiamata tool `{tool_name}`: `{e}`")
             break
 
-    # Rollback parziale in ordine inverso in caso di errore
-    if has_error and executed_steps:
+    # Rollback dichiarativo in ordine inverso (LIFO Undo Stack)
+    if has_error and execution_log:
         exec_lines.append("\n### 🔄 Rollback parziale degli step eseguiti:\n")
-        for step_info in reversed(executed_steps):
-            t_name = step_info.get("tool", "")
-            res_obj = step_info.get("result", {})
-            args_used = step_info.get("args", {})
-            
-            if t_name == "proxmox-mcp__allocate_ip":
-                ip_to_rel = args_used.get("ip") or extract_output_var(res_obj, "ip", step_info["step"].get("id", 0))
-                if ip_to_rel:
-                    try:
-                        logger.info(f"Rollback: rilascio IP {ip_to_rel}")
-                        client.call_tool("proxmox-mcp__release_ip", {"ip": ip_to_rel})
-                        exec_lines.append(f"  ✅ Rilasciato IP `{ip_to_rel}`")
-                    except Exception as rb_err:
-                        logger.warning(f"Rollback fallito per IP {ip_to_rel}: {rb_err}")
-                        exec_lines.append(f"  ❌ Errore rilascio IP `{ip_to_rel}`: {rb_err}")
+        tools_catalog = get_tool_catalog()
+        
+        for log_entry in reversed(execution_log):
+            if not log_entry.error:  # Rollback solo degli step eseguiti con successo
+                success = execute_rollback_for_step(log_entry, tools_catalog)
+                step_id = log_entry.step.get("id")
+                if success:
+                    exec_lines.append(f"  ✅ Rollback step {step_id}: `{log_entry.tool_name}`")
+                else:
+                    exec_lines.append(f"  ❌ Rollback FALLITO/SKIPPATO step {step_id}: `{log_entry.tool_name}` — {log_entry.rollback_error}")
 
-            elif t_name == "proxmox-mcp__create_lxc_from_template":
-                vmid_to_stop = extract_output_var(res_obj, "vmid", step_info["step"].get("id", 0))
-                if vmid_to_stop:
-                    try:
-                        logger.info(f"Rollback: arresto LXC {vmid_to_stop}")
-                        client.call_tool("proxmox-mcp__stop_container", {"vmid": vmid_to_stop})
-                        exec_lines.append(f"  ✅ Arrestato LXC container `{vmid_to_stop}`")
-                    except Exception as rb_err:
-                        logger.warning(f"Rollback fallito per VMID {vmid_to_stop}: {rb_err}")
-                        exec_lines.append(f"  ❌ Errore arresto LXC `{vmid_to_stop}`: {rb_err}")
+        # Se alcuni rollback dichiarativi falliscono o non sono reversibili, attiva LLM Rollback Planning
+        failed_rollbacks = [e for e in execution_log if not e.rollback_executed and not e.error]
+        if failed_rollbacks:
+            exec_lines.append("\n### 🤖 LLM-based Rollback Planning:\n")
+            error_ctx = "Step non reversibili o rollback dichiarativo non completato"
+            llm_plan = generate_rollback_plan_with_llm(execution_log, task, error_ctx)
+            if llm_plan:
+                exec_lines.append(f"```\n{llm_plan}\n```")
+                exec_lines.append("\n⚠️ **Piano LLM generato: esegui manualmente i passaggi sopra se necessario.**")
 
-            elif t_name == "proxmox-mcp__add_pihole_dns_record":
-                dom = args_used.get("domain")
-                t_ip = args_used.get("target_ip") or args_used.get("ip")
-                if dom and t_ip:
-                    try:
-                        logger.info(f"Rollback: eliminazione DNS {dom}")
-                        client.call_tool("proxmox-mcp__delete_pihole_dns_record", {"domain": dom, "target_ip": t_ip})
-                        exec_lines.append(f"  ✅ Rimosso record DNS `{dom}`")
-                    except Exception as rb_err:
-                        logger.warning(f"Rollback fallito per DNS {dom}: {rb_err}")
-                        exec_lines.append(f"  ❌ Errore rimozione DNS `{dom}`: {rb_err}")
-
-            elif t_name == "proxmox-mcp__create_npm_proxy_host":
-                dom = args_used.get("domain")
-                if dom:
-                    try:
-                        logger.info(f"Rollback: eliminazione Host Proxy NPM {dom}")
-                        client.call_tool("proxmox-mcp__delete_npm_proxy_host", {"domain": dom})
-                        exec_lines.append(f"  ✅ Eliminato Host Proxy NPM `{dom}`")
-                    except Exception as rb_err:
-                        logger.warning(f"Rollback fallito per NPM {dom}: {rb_err}")
-                        exec_lines.append(f"  ❌ Errore eliminazione Host Proxy NPM `{dom}`: {rb_err}")
-
-        exec_lines.append("\n⚠️ **Rollback parziale completato. Stato dell'infrastruttura ripristinato.**")
+        exec_lines.append("\n⚠️ **Rollback parziale completato. Verifica dello stato raccomandata.**")
 
     if not has_error:
         exec_lines.append("\n🎉 **Tutti i passaggi del piano sono stati eseguiti con successo su Proxmox!**")
 
     ans = "\n".join(exec_lines)
-    plan = {"mode": "act", "tool_needed": True, "direct_answer": ans, "plan_structure": plan_struct}
+    log_dicts = [log.to_dict() for log in execution_log]
+    plan = {"mode": "act", "tool_needed": True, "direct_answer": ans, "plan_structure": plan_struct, "execution_log": log_dicts}
     return {"plan": plan, "plan_structure": plan_struct, "final_response": ans}
 
 
