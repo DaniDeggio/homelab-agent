@@ -2,13 +2,11 @@ import os
 import time
 import json
 import base64
-import uuid
 import logging
 import requests
 import subprocess
 from typing import Dict, Any
 
-from mcp_client import MetaMCPClient
 import config
 
 logger = logging.getLogger("firecracker_sandbox")
@@ -16,9 +14,9 @@ logger = logging.getLogger("firecracker_sandbox")
 class FirecrackerSandbox:
     def __init__(self):
         self.api_url = config.FIRECRACKER_API_URL
+        self.log_url = config.FIRECRACKER_LOG_URL
         self.kernel_path = config.FIRECRACKER_KERNEL_PATH
         self.rootfs_path = config.FIRECRACKER_ROOTFS_PATH
-        self.mcp = MetaMCPClient(config.METAMCP_URL, api_key=config.METAMCP_API_KEY)
 
     def is_available(self) -> bool:
         """Verifica se l'API HTTP di Firecracker è raggiungibile."""
@@ -28,25 +26,7 @@ class FirecrackerSandbox:
         except requests.RequestException:
             return False
 
-    def _exec_host_cmd(self, cmd: str) -> str:
-        try:
-            res = self.mcp.call_tool("exec_host_command", {"command": cmd})
-            if isinstance(res, dict) and "content" in res:
-                for item in res.get("content", []):
-                    if item.get("type") == "text":
-                        try:
-                            parsed = json.loads(item.get("text", ""))
-                            if isinstance(parsed, dict):
-                                return parsed.get("stdout", "")
-                        except Exception:
-                            pass
-            elif isinstance(res, dict) and "stdout" in res:
-                return res["stdout"]
-        except Exception as e:
-            logger.warning(f"Errore exec_host_cmd: {e}")
-        return ""
-
-    def execute_code(self, code: str, timeout: int = 15) -> Dict[str, Any]:
+    def execute_code(self, code: str, timeout: int = 10) -> Dict[str, Any]:
         """
         Esegue codice Python in una microVM Firecracker reale col Guest Runner.
         Se l'infrastruttura o l'API falliscono, ricorre al fallback locale con sandboxed=False.
@@ -55,24 +35,12 @@ class FirecrackerSandbox:
             logger.warning(f"API Firecracker non disponibile su {self.api_url}. Uso fallback.")
             return self._execute_fallback(code, timeout=timeout)
 
-        run_id = str(uuid.uuid4())[:8]
-        payload_file_host = f"/opt/firecracker/fc_payload_{run_id}.raw"
-
         try:
-            # 1. Prepariamo il payload block device (/dev/vdb) sull'host
+            # 1. Base64 del codice Python
             b64_code = base64.b64encode(code.encode("utf-8")).decode("utf-8")
-            payload_content = f"<<<PAYLOAD_START>>>{b64_code}<<<PAYLOAD_END>>>\n"
-            
-            b64_payload_file = base64.b64encode(payload_content.encode("utf-8")).decode("utf-8")
-            create_cmd = (
-                f"truncate -s 1M {payload_file_host} && "
-                f"echo '{b64_payload_file}' | base64 -d | dd of={payload_file_host} conv=notrunc"
-            )
-            self._exec_host_cmd(create_cmd)
+            boot_args = f"console=ttyS0 quiet panic=1 pci=off init=/usr/local/bin/guest_runner.sh b64payload={b64_code}"
 
-            # 2. Configurazione VM via API REST
-            boot_args = "console=ttyS0 quiet panic=1 pci=off init=/usr/local/bin/guest_runner.sh"
-            
+            # 2. Configurazione ed Avvio MicroVM via REST API
             res_boot = requests.put(f"{self.api_url}/boot-source", json={
                 "kernel_image_path": self.kernel_path,
                 "boot_args": boot_args
@@ -87,34 +55,30 @@ class FirecrackerSandbox:
             }, timeout=3)
             res_root.raise_for_status()
 
-            res_vdb = requests.put(f"{self.api_url}/drives/payload", json={
-                "drive_id": "payload",
-                "path_on_host": payload_file_host,
-                "is_root_device": False,
-                "is_read_only": False
-            }, timeout=3)
-            res_vdb.raise_for_status()
-
-            # Avvio MicroVM
             res_start = requests.put(f"{self.api_url}/actions", json={
                 "action_type": "InstanceStart"
             }, timeout=3)
             res_start.raise_for_status()
 
-            # 3. Attesa risultato leggendo il payload block device
+            # 3. Attesa risultato leggendo il log/console del server
             start_time = time.time()
             res_data = None
             
             while time.time() - start_time < timeout:
                 time.sleep(0.3)
-                out = self._exec_host_cmd(f"cat {payload_file_host} | tr -d '\\000'")
-                if "<<<RESULT_START>>>" in out and "<<<RESULT_END>>>" in out:
-                    s_idx = out.find("<<<RESULT_START>>>") + len("<<<RESULT_START>>>")
-                    e_idx = out.find("<<<RESULT_END>>>")
-                    b64_json = out[s_idx:e_idx].strip()
-                    res_json_str = base64.b64decode(b64_json).decode("utf-8")
-                    res_data = json.loads(res_json_str)
-                    break
+                try:
+                    c_res = requests.get(self.log_url, timeout=2)
+                    if c_res.status_code == 200:
+                        txt = c_res.text
+                        if "<<<RESULT_START>>>" in txt and "<<<RESULT_END>>>" in txt:
+                            s_idx = txt.find("<<<RESULT_START>>>") + len("<<<RESULT_START>>>")
+                            e_idx = txt.find("<<<RESULT_END>>>")
+                            b64_json = txt[s_idx:e_idx].strip()
+                            res_json_str = base64.b64decode(b64_json).decode("utf-8")
+                            res_data = json.loads(res_json_str)
+                            break
+                except requests.RequestException:
+                    pass
 
             if not res_data:
                 logger.warning("Timeout risposta microVM Firecracker. Uso fallback.")
@@ -128,14 +92,8 @@ class FirecrackerSandbox:
             }
 
         except Exception as e:
-            logger.warning(f"Errore esecuzione Firecracker: {e}. Uso fallback.")
+            logger.warning(f"Errore esecuzione Firecracker ({e}). Uso fallback.")
             return self._execute_fallback(code, timeout=timeout)
-        finally:
-            # Cleanup file temporaneo sull'host
-            try:
-                self._exec_host_cmd(f"rm -f {payload_file_host}")
-            except Exception:
-                pass
 
     def _execute_fallback(self, code: str, timeout: int = 5) -> Dict[str, Any]:
         """Fallback temporaneo via subprocess locale sul CT backend."""

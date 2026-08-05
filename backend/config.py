@@ -25,5 +25,7 @@ CHECKPOINT_DB_PATH = os.getenv("CHECKPOINT_DB_PATH", str(Path(__file__).parent /
 
 # Firecracker Setup
 FIRECRACKER_API_URL = os.getenv("FIRECRACKER_API_URL", "http://localhost:8080")
+FIRECRACKER_LOG_URL = os.getenv("FIRECRACKER_LOG_URL", "http://localhost:8081/console.log")
 FIRECRACKER_KERNEL_PATH = os.getenv("FIRECRACKER_KERNEL_PATH", "/opt/firecracker/vmlinux.bin")
 FIRECRACKER_ROOTFS_PATH = os.getenv("FIRECRACKER_ROOTFS_PATH", "/opt/firecracker/rootfs.ext4")
+
