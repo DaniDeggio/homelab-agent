@@ -1,7 +1,7 @@
 import logging
 import httpx
 import re
-from typing import Optional, List, Dict, Any
+from typing import Optional, List, Dict, Any, Tuple
 import config
 
 logging.basicConfig(level=logging.INFO)
