@@ -1,0 +1,45 @@
+# Ambiente Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+env/
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+*.egg-info/
+.installed.cfg
+*.egg
+
+# Ambienti virtuali
+venv/
+.venv/
+env/
+.env
+
+# File di configurazione sensibili
+.env
+*.local.env
+.env.*
+config.local.yaml
+
+# Node/Vite (Frontend)
+node_modules/
+dist/
+dist-ssr/
+*.local
+
+# Database/Checkpoints
+*.sqlite
+*.db
+backend/checkpoints.db
+backend/memory/

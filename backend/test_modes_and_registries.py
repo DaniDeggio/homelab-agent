@@ -37,6 +37,9 @@ class TestModesAndRegistries(unittest.TestCase):
         res = reg.execute_tool("python_interpreter", {"code": "print(2 + 2)"})
         self.assertTrue(res.get("success"))
         self.assertEqual(res.get("output"), "4")
+        self.assertIn("sandboxed", res)
+        # Should fallback to False since we don't have kernel/rootfs in test environment
+        self.assertFalse(res.get("sandboxed"))
 
     def test_agent_loop_chat_mode(self):
         def dummy_llm(prompt, system_prompt=None):
