@@ -39,7 +39,8 @@ def get_tool_catalog(force_refresh: bool = False) -> list[dict]:
 
     # 2. Fallback OpenAPI se list_tools è vuoto
     if not tools:
-        url = f"{config.METAMCP_URL_HTTP.rstrip('/')}/api/openapi.json"
+        base_http = getattr(config, "METAMCP_URL_HTTP", "http://192.168.1.175:12008").rstrip('/')
+        url = f"{base_http}/api/openapi.json"
         headers = {"Authorization": f"Bearer {config.METAMCP_API_KEY}"} if config.METAMCP_API_KEY else {}
         try:
             res = requests.get(url, headers=headers, timeout=5)

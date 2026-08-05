@@ -14,6 +14,7 @@ def load_env():
 load_env()
 
 METAMCP_URL = os.getenv("METAMCP_URL", "http://192.168.1.175:12008/metamcp/MetaMCP/sse")
+METAMCP_URL_HTTP = os.getenv("METAMCP_URL_HTTP", "http://192.168.1.175:12008")
 METAMCP_API_KEY = os.getenv("METAMCP_API_KEY", "")
 DEFAULT_MODEL = os.getenv("DEFAULT_MODEL", "Qwen3.6-35B-HugeCtx")
 LLAMA_CPP_URL = os.getenv("LLAMA_CPP_URL", "http://192.168.1.159:8080/v1")
