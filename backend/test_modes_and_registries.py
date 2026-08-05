@@ -32,13 +32,21 @@ class TestModesAndRegistries(unittest.TestCase):
         self.assertIn("web_search", names)
         self.assertIn("python_interpreter", names)
 
-    def test_code_exec_fallback(self):
+    def test_code_exec_sandbox(self):
         reg = CodeExecRegistry()
         res = reg.execute_tool("python_interpreter", {"code": "print(2 + 2)"})
         self.assertTrue(res.get("success"))
-        self.assertEqual(res.get("output"), "4")
+        self.assertEqual(res.get("output").strip(), "4")
         self.assertIn("sandboxed", res)
-        # Should fallback to False since we don't have kernel/rootfs in test environment
+        # Verify that sandboxed is True when real Firecracker microVM runs
+        self.assertTrue(res.get("sandboxed"))
+
+    def test_code_exec_fallback(self):
+        sb = FirecrackerSandbox()
+        sb.api_url = "http://127.0.0.1:9999" # invalid URL to trigger fallback
+        res = sb.execute_code("print(3 * 3)")
+        self.assertTrue(res.get("success"))
+        self.assertEqual(res.get("output").strip(), "9")
         self.assertFalse(res.get("sandboxed"))
 
     def test_agent_loop_chat_mode(self):

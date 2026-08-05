@@ -18,106 +18,108 @@ class FirecrackerSandbox:
         self.api_url = config.FIRECRACKER_API_URL
         self.kernel_path = config.FIRECRACKER_KERNEL_PATH
         self.rootfs_path = config.FIRECRACKER_ROOTFS_PATH
-        # MetaMCP client per interagire con l'host Proxmox per il recupero output
         self.mcp = MetaMCPClient(config.METAMCP_URL, api_key=config.METAMCP_API_KEY)
 
     def is_available(self) -> bool:
         """Verifica se l'API HTTP di Firecracker è raggiungibile."""
         try:
-            res = requests.get(f"{self.api_url}", timeout=2)
-            # Anche se restituisce 404 per root path, significa che il server risponde
-            return True
+            res = requests.get(f"{self.api_url}/machine-config", timeout=2)
+            return res.status_code == 200
         except requests.RequestException:
             return False
 
-    def execute_code(self, code: str, timeout: int = 5) -> Dict[str, Any]:
+    def execute_code(self, code: str, timeout: int = 10) -> Dict[str, Any]:
         """
-        Esegue codice Python in microVM effimera tramite API HTTP di Firecracker.
-        Se Firecracker non è raggiungibile, degrada a subprocess locale con sandboxed=False.
+        Esegue codice Python in una microVM Firecracker reale col Guest Runner.
+        Se l'infrastruttura o l'API falliscono, ricorre al fallback locale con sandboxed=False.
         """
         if not self.is_available():
-            logger.warning(f"API Firecracker ({self.api_url}) non raggiungibile. Uso fallback.")
+            logger.warning(f"API Firecracker non disponibile su {self.api_url}. Uso fallback.")
             return self._execute_fallback(code, timeout=timeout)
 
         run_id = str(uuid.uuid4())[:8]
-        output_file_host = f"/tmp/fc_out_{run_id}.raw"
-        
+        payload_file_host = f"/tmp/fc_payload_{run_id}.raw"
+
         try:
-            # 1. Prepariamo un block device RAW sull'host per catturare l'output
-            # Usiamo MCP per creare il file vuoto sull'host (1MB)
-            create_cmd = f"truncate -s 1M {output_file_host}"
+            # 1. Prepariamo il payload block device (/dev/vdb) sull'host
+            b64_code = base64.b64encode(code.encode("utf-8")).decode("utf-8")
+            payload_content = f"<<<PAYLOAD_START>>>{b64_code}<<<PAYLOAD_END>>>\n"
+            
+            b64_payload_file = base64.b64encode(payload_content.encode("utf-8")).decode("utf-8")
+            create_cmd = (
+                f"truncate -s 1M {payload_file_host} && "
+                f"echo '{b64_payload_file}' | base64 -d | dd of={payload_file_host} conv=notrunc"
+            )
             self.mcp.call_tool("exec_host_command", {"command": create_cmd})
 
-            # 2. Prepariamo lo script codificato in base64 per evitare problemi di escaping
-            b64_code = base64.b64encode(code.encode('utf-8')).decode('utf-8')
+            # 2. Configurazione VM via API REST
+            boot_args = "console=ttyS0 quiet panic=1 pci=off init=/usr/local/bin/guest_runner.sh"
             
-            # 3. Boot args: decodifica, esegue, scrive su /dev/vdb (il nostro file raw) e spegne
-            # Aggiungiamo un marker EOF per capire quando ha finito
-            eof_marker = f"---EOF-{run_id}---"
-            sh_cmd = f"python3 -c \"import base64; exec(base64.b64decode(b'{b64_code}').decode('utf-8'))\" > /dev/vdb 2>&1; echo '\n{eof_marker}' >> /dev/vdb; poweroff -f"
-            boot_args = f"console=ttyS0 quiet panic=1 pci=off init=/bin/sh -c \"{sh_cmd}\""
-
-            # 4. Configurazione VM via API REST
-            # Imposta kernel
             res_boot = requests.put(f"{self.api_url}/boot-source", json={
                 "kernel_image_path": self.kernel_path,
                 "boot_args": boot_args
             }, timeout=3)
             res_boot.raise_for_status()
 
-            # Imposta rootfs (vda)
-            res_rootfs = requests.put(f"{self.api_url}/drives/rootfs", json={
+            res_root = requests.put(f"{self.api_url}/drives/rootfs", json={
                 "drive_id": "rootfs",
                 "path_on_host": self.rootfs_path,
                 "is_root_device": True,
                 "is_read_only": True
             }, timeout=3)
-            res_rootfs.raise_for_status()
+            res_root.raise_for_status()
 
-            # Imposta drive di output (vdb)
-            res_outdrive = requests.put(f"{self.api_url}/drives/output", json={
-                "drive_id": "output",
-                "path_on_host": output_file_host,
+            res_vdb = requests.put(f"{self.api_url}/drives/payload", json={
+                "drive_id": "payload",
+                "path_on_host": payload_file_host,
                 "is_root_device": False,
                 "is_read_only": False
             }, timeout=3)
-            res_outdrive.raise_for_status()
+            res_vdb.raise_for_status()
 
-            # 5. Avvia la microVM
+            # Avvio MicroVM
             res_start = requests.put(f"{self.api_url}/actions", json={
                 "action_type": "InstanceStart"
             }, timeout=3)
             res_start.raise_for_status()
 
-            # 6. Attendi il completamento leggendo ciclicamente l'output via host
+            # 3. Attesa risultato leggendo il payload block device
             start_time = time.time()
-            output_content = ""
-            success = False
-
+            res_data = None
+            
             while time.time() - start_time < timeout:
-                time.sleep(0.5)
-                # Leggi il file raw dall'host
-                cat_res = self.mcp.call_tool("exec_host_command", {"command": f"cat {output_file_host} | tr -d '\\000'"})
-                
-                if cat_res and isinstance(cat_res, dict) and "stdout" in cat_res:
-                    curr_out = cat_res["stdout"]
-                    if eof_marker in curr_out:
-                        output_content = curr_out.split(eof_marker)[0].strip()
-                        success = True
+                time.sleep(0.3)
+                read_res = self.mcp.call_tool("exec_host_command", {
+                    "command": f"cat {payload_file_host} | tr -d '\\000'"
+                })
+                if read_res and isinstance(read_res, dict) and "stdout" in read_res:
+                    out = read_res["stdout"]
+                    if "<<<RESULT_START>>>" in out and "<<<RESULT_END>>>" in out:
+                        s_idx = out.find("<<<RESULT_START>>>") + len("<<<RESULT_START>>>")
+                        e_idx = out.find("<<<RESULT_END>>>")
+                        b64_json = out[s_idx:e_idx].strip()
+                        res_json_str = base64.b64decode(b64_json).decode("utf-8")
+                        res_data = json.loads(res_json_str)
                         break
 
-            if not success:
-                return {"output": "Timeout o fallimento microVM", "success": False, "sandboxed": True, "error": f"Timeout {timeout}s superato"}
+            if not res_data:
+                logger.warning("Timeout risposta microVM Firecracker. Uso fallback.")
+                return self._execute_fallback(code, timeout=timeout)
 
-            return {"output": output_content, "success": True, "sandboxed": True, "error": None}
+            return {
+                "output": res_data.get("output", ""),
+                "success": res_data.get("success", False),
+                "sandboxed": True,
+                "error": res_data.get("error")
+            }
 
         except Exception as e:
-            logger.warning(f"Errore durante l'esecuzione in Firecracker: {e}. Uso fallback.")
+            logger.warning(f"Errore esecuzione Firecracker: {e}. Uso fallback.")
             return self._execute_fallback(code, timeout=timeout)
         finally:
-            # 7. Pulizia file di output sull'host
+            # Cleanup file temporaneo sull'host
             try:
-                self.mcp.call_tool("exec_host_command", {"command": f"rm -f {output_file_host}"})
+                self.mcp.call_tool("exec_host_command", {"command": f"rm -f {payload_file_host}"})
             except Exception:
                 pass
 
@@ -140,4 +142,3 @@ class FirecrackerSandbox:
             return {"output": "", "success": False, "sandboxed": False, "error": f"Timeout esecuzione ({timeout}s) superato."}
         except Exception as e:
             return {"output": "", "success": False, "sandboxed": False, "error": str(e)}
-
