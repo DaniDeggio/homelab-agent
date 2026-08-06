@@ -31,8 +31,14 @@ export function useChat(currentThreadId: string | null, onThreadCreated?: (id: s
     setIsLoadingChat(true);
     try {
       const details = await getThreadDetails(threadId);
-      if (details && details.letta_messages) {
-        const parsedMsgs = adaptLettaMessagesToMessages(details.letta_messages);
+      if (details) {
+        let parsedMsgs: FormattedMessage[] = [];
+        if (details.messages && details.messages.length > 0) {
+          parsedMsgs = details.messages;
+        } else if (details.letta_messages && details.letta_messages.length > 0) {
+          parsedMsgs = adaptLettaMessagesToMessages(details.letta_messages);
+        }
+
         setThreadMessagesMap((prev) => ({
           ...prev,
           [threadId]: parsedMsgs,

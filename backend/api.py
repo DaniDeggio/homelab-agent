@@ -1,4 +1,5 @@
 import os
+import time
 import sqlite3
 from typing import Optional, List
 from fastapi import FastAPI, HTTPException, Depends, Security
@@ -7,6 +8,7 @@ from fastapi.security import APIKeyHeader
 from schemas import ChatRequest, ChatResponse, ThreadSummary
 from graph import build_graph
 import letta_client
+import thread_store
 import config
 
 app_graph = build_graph()
@@ -34,10 +36,10 @@ def verify_api_key(x_api_key: Optional[str] = Security(api_key_header)):
     return x_api_key
 
 def run_agent_flow(task: str, thread_id: Optional[str], force_mode: Optional[str] = None, execute: bool = False) -> ChatResponse:
-    effective_thread_id = thread_id or "default"
+    effective_thread_id = thread_id or f"thread_{int(time.time() * 1000)}"
     initial_state = {
         "task": task,
-        "thread_id": thread_id,
+        "thread_id": effective_thread_id,
         "force_mode": force_mode,
         "execute": execute,
         "agent_id": None,
@@ -60,16 +62,23 @@ def run_agent_flow(task: str, thread_id: Optional[str], force_mode: Optional[str
         plan_steps = plan_dict.get("plan_steps") if isinstance(plan_dict, dict) else None
         plan_structure = final_state.get("plan_structure") or (plan_dict.get("plan_structure") if isinstance(plan_dict, dict) else None)
         execution_trace = final_state.get("execution_trace") or (plan_dict.get("execution_log") if isinstance(plan_dict, dict) else None)
+        rollback_trace = final_state.get("rollback_trace")
             
-        return ChatResponse(
-            thread_id=thread_id,
+        resp = ChatResponse(
+            thread_id=effective_thread_id,
             mode=mode,
             response=response_text,
             tool_used=tool_used,
             plan_steps=plan_steps,
             plan_structure=plan_structure,
-            execution_trace=execution_trace
+            execution_trace=execution_trace,
+            rollback_trace=rollback_trace
         )
+
+        # Salva atomico del turno nello store SQLite
+        thread_store.save_turn(effective_thread_id, task, resp.model_dump())
+
+        return resp
 
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Graph execution failed: {str(e)}")
@@ -111,9 +120,10 @@ async def list_threads():
         for tid, count in rows:
             if not tid:
                 continue
+            last_msg = thread_store.get_last_message(tid)
             summaries.append(ThreadSummary(
                 thread_id=tid,
-                last_message=None,
+                last_message=last_msg,
                 checkpoint_count=count
             ))
         return summaries
@@ -130,6 +140,8 @@ async def get_thread(thread_id: str):
         count = cursor.fetchone()[0]
         conn.close()
         
+        stored_messages = thread_store.get_thread_messages(thread_id)
+
         agent_id = letta_client.create_thread(thread_id)
         raw_messages = letta_client.get_messages(agent_id) if agent_id else []
         clean_messages = letta_client.filter_clean_messages(raw_messages)
@@ -138,6 +150,7 @@ async def get_thread(thread_id: str):
             "thread_id": thread_id,
             "agent_id": agent_id,
             "checkpoint_count": count,
+            "messages": stored_messages,
             "letta_messages": clean_messages
         }
 
@@ -153,6 +166,8 @@ async def delete_single_thread(thread_id: str):
         deleted_rows = cursor.rowcount
         conn.commit()
         conn.close()
+
+        thread_store.delete_thread_messages(thread_id)
 
         # Delete from Letta if agent exists
         agent_id = letta_client.create_thread(thread_id)
@@ -172,6 +187,8 @@ async def delete_all_threads():
         deleted_rows = cursor.rowcount
         conn.commit()
         conn.close()
+
+        thread_store.clear_all_thread_messages()
 
         return {"status": "cleared", "deleted_checkpoints": deleted_rows}
     except Exception as e:

@@ -84,6 +84,7 @@ export interface ThreadDetails {
   thread_id: string;
   agent_id?: string;
   checkpoint_count?: number;
+  messages?: FormattedMessage[];
   letta_messages?: LettaMessage[];
 }
 
