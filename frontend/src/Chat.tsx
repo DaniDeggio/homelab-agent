@@ -3,6 +3,7 @@ import { Send, Bot, User, Wrench, Sparkles, AlertTriangle, Play, Menu, Activity 
 import type { FormattedMessage, AgentMode } from './api';
 import { PlanViewer } from './components/PlanViewer';
 import { ExecutionTraceViewer } from './components/ExecutionTraceViewer';
+import { MarkdownRenderer } from './components/MarkdownRenderer';
 
 interface ChatProps {
   currentThreadId: string | null;
@@ -210,7 +211,11 @@ export const Chat: React.FC<ChatProps> = ({
                         : 'bg-slate-900 border border-slate-800 text-slate-100 rounded-tl-none shadow-sm'
                     }`}
                   >
-                    <div className="whitespace-pre-wrap font-sans break-words">{msg.content}</div>
+                    {isUser ? (
+                      <div className="whitespace-pre-wrap font-sans break-words">{msg.content}</div>
+                    ) : (
+                      <MarkdownRenderer content={msg.content} />
+                    )}
 
                     {/* Mode Specific Inline Views (Act / Plan / Trace) */}
                     {!isUser && (

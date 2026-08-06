@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import { ShieldCheck, ShieldAlert, ChevronDown, ChevronUp, RotateCcw, Brain, Wrench } from 'lucide-react';
 import type { ExecutionTraceItem, RollbackAction } from '../api';
+import { MarkdownRenderer } from './MarkdownRenderer';
 
 interface ExecutionTraceViewerProps {
   reasoning?: string;
@@ -76,9 +77,9 @@ export const ExecutionTraceViewer: React.FC<ExecutionTraceViewerProps> = ({
                 <Brain size={14} className="text-purple-400" />
                 <span>LLM Chain of Thought / Reasoning</span>
               </div>
-              <p className="text-xs text-slate-300 leading-relaxed font-sans whitespace-pre-wrap pl-5 border-l-2 border-purple-500/40">
-                {reasoning}
-              </p>
+              <div className="pl-4 border-l-2 border-purple-500/40 font-sans">
+                <MarkdownRenderer content={reasoning} />
+              </div>
             </div>
           )}
 
