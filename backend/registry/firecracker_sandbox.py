@@ -22,7 +22,7 @@ class FirecrackerSandbox:
         """Verifica se l'API HTTP di Firecracker è raggiungibile."""
         try:
             res = requests.get(f"{self.api_url}/machine-config", timeout=2)
-            return res.status_code == 200
+            return res.status_code in [200, 400]  # 200 = ready, 400 = microVM is running
         except requests.RequestException:
             return False
 
@@ -40,22 +40,31 @@ class FirecrackerSandbox:
             b64_code = base64.b64encode(code.encode("utf-8")).decode("utf-8")
             boot_args = f"console=ttyS0 quiet panic=1 pci=off init=/usr/local/bin/guest_runner.sh b64payload={b64_code}"
 
-            # 2. Configurazione ed Avvio MicroVM via REST API
-            res_boot = requests.put(f"{self.api_url}/boot-source", json={
-                "kernel_image_path": self.kernel_path,
-                "boot_args": boot_args
-            }, timeout=3)
-            if res_boot.status_code == 400:
+            # Invia SendCtrlAltDel per riavviare se un'istanza precedente era attiva
+            try:
+                requests.put(f"{self.api_url}/actions", json={"action_type": "SendCtrlAltDel"}, timeout=1.5)
+                time.sleep(0.3)
+            except Exception:
+                pass
+
+            # 2. Configurazione ed Avvio MicroVM via REST API (con retry brevi)
+            res_boot = None
+            for _ in range(5):
                 try:
-                    requests.put(f"{self.api_url}/actions", json={"action_type": "SendCtrlAltDel"}, timeout=2)
+                    r = requests.put(f"{self.api_url}/boot-source", json={
+                        "kernel_image_path": self.kernel_path,
+                        "boot_args": boot_args
+                    }, timeout=3)
+                    if r.status_code == 204:
+                        res_boot = r
+                        break
                 except Exception:
                     pass
-                time.sleep(0.6)
-                res_boot = requests.put(f"{self.api_url}/boot-source", json={
-                    "kernel_image_path": self.kernel_path,
-                    "boot_args": boot_args
-                }, timeout=3)
-            res_boot.raise_for_status()
+                time.sleep(0.2)
+
+            if not res_boot:
+                logger.warning("Impossibile impostare boot-source Firecracker. Uso fallback.")
+                return self._execute_fallback(code, timeout=timeout)
 
             res_root = requests.put(f"{self.api_url}/drives/rootfs", json={
                 "drive_id": "rootfs",

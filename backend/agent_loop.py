@@ -47,7 +47,9 @@ def run_agent_loop(
             f"Catalogo tool disponibili per questa modalità:\n{catalog_str}\n\n"
             f"Contesto memoria conversazionale:\n{memory_context or ''}\n\n"
             f"Storico azioni eseguite in questo turno:\n{obs_context}\n\n"
-            "Se la richiesta è stata soddisfatta o non serve altro tool, imposta tool_needed=false e fornisci la risposta finale in reasoning."
+            "Se devi chiamare un tool, imposta tool_needed=true, seleziona tool_name e inserisci gli argomenti.\n"
+            "Se la richiesta è stata soddisfatta o non servono altri tool, imposta tool_needed=false, "
+            "inserisci la tua motivazione interna in 'reasoning' e FORNISCI LA RISPOSTA FINALE UTILE E COMPLETA PER L'UTENTE in 'final_answer'."
         )
 
         if not call_llm_structured_fn:
@@ -57,13 +59,37 @@ def run_agent_loop(
             prompt=task,
             system_prompt=system_prompt,
             schema_cls=ToolSelection,
-            max_tokens=500,
+            max_tokens=600,
             temperature=0.0,
             max_retries=2
         )
 
         if not selection or not selection.tool_needed or not selection.tool_name:
-            final_ans = selection.reasoning if selection and selection.reasoning else "Richiesta completata senza ulteriori azioni."
+            # 1. Se l'LLM ha fornito un final_answer esplicito
+            if selection and selection.final_answer and len(selection.final_answer.strip()) > 10:
+                final_ans = selection.final_answer.strip()
+            # 2. Se abbiamo eseguito dei tool ed abbiamo delle osservazioni, sintetizziamo la risposta per l'utente
+            elif history_observations and call_llm_fn:
+                summary_prompt = (
+                    f"Task utente: '{task}'\n\n"
+                    f"Storico azioni e risultati dei tool eseguiti:\n" + "\n".join(history_observations) + "\n\n"
+                    f"Fornisci una risposta finale completa, chiara e ben formattata in italiano per l'utente. "
+                    f"Se sono stati elencati container o risorse, mostra una tabella o un elenco leggibile dei risultati rilevanti."
+                )
+                syn_ans = call_llm_fn(summary_prompt)
+                final_ans = syn_ans if syn_ans else "Operazione completata con successo."
+            # 3. Se la richiesta non richiede tool (es. domande concettuali), generiamo una risposta diretta
+            elif call_llm_fn:
+                direct_prompt = (
+                    f"Rispondi in modo completo, chiaro ed esaustivo alla seguente domanda dell'utente in italiano.\n"
+                    f"Domanda: '{task}'\n"
+                    f"Contesto memoria:\n{memory_context or ''}"
+                )
+                syn_ans = call_llm_fn(direct_prompt)
+                final_ans = syn_ans if syn_ans else (selection.reasoning if (selection and selection.reasoning) else "Richiesta completata.")
+            else:
+                final_ans = selection.reasoning if (selection and selection.reasoning) else "Richiesta completata."
+
             return {"final_response": final_ans, "execution_trace": execution_trace}
 
         tool_name = selection.tool_name
