@@ -23,6 +23,7 @@ export interface ExecutionTraceItem {
   output?: any;
   result?: any;
   error?: string;
+  reasoning?: string;
   execution_time_ms?: number;
   sandboxed?: boolean;
   timestamp?: string;
@@ -93,6 +94,7 @@ export interface FormattedMessage {
   timestamp: string;
   mode?: AgentMode | string;
   tool_used?: string;
+  reasoning?: string;
   plan_steps?: string[];
   plan_structure?: PlanStructure;
   execution_trace?: ExecutionTraceItem[];

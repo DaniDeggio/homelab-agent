@@ -97,11 +97,13 @@ export const ToolLog: React.FC<ToolLogProps> = ({
             )}
           </div>
 
-          {/* Execution Trace Viewer */}
+          {/* Execution Trace & Reasoning Viewer */}
           <ExecutionTraceViewer
+            reasoning={executionTrace?.find((t) => t.reasoning)?.reasoning}
             trace={executionTrace}
             rollbackTrace={rollbackTrace}
             compact={true}
+            initialCollapsed={false}
           />
 
           {/* Plan Viewer */}

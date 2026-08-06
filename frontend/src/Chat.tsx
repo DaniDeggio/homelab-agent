@@ -225,11 +225,13 @@ export const Chat: React.FC<ChatProps> = ({
                           />
                         )}
 
-                        {/* Inline Execution Trace for Act / Ask Modes */}
-                        {(modeName === 'act' || modeName === 'ask') && msg.execution_trace && msg.execution_trace.length > 0 && (
+                        {/* Inline Reasoning & Execution Trace */}
+                        {(msg.reasoning || (msg.execution_trace && msg.execution_trace.length > 0) || (msg.rollback_trace && msg.rollback_trace.length > 0)) && (
                           <ExecutionTraceViewer
+                            reasoning={msg.reasoning}
                             trace={msg.execution_trace}
                             rollbackTrace={msg.rollback_trace}
+                            initialCollapsed={true}
                           />
                         )}
                       </>

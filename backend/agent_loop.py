@@ -77,6 +77,7 @@ def run_agent_loop(
                 "step_id": step_id,
                 "tool_name": tool_name,
                 "args": arguments,
+                "reasoning": selection.reasoning if selection else None,
                 "error": f"Validazione fallita: {val_error}"
             })
             history_observations.append(f"Step {step_id}: Chiamata a '{tool_name}' fallita la validazione -> {val_error}")
@@ -85,14 +86,17 @@ def run_agent_loop(
         # Esecuzione del tool via Registry Manager
         tool_res = manager.execute_tool(tool_name, arguments, policy.allowed_registries)
         
-        is_error = isinstance(tool_res, dict) and "error" in tool_res
-        err_msg = tool_res["error"] if is_error else None
+        is_error = isinstance(tool_res, dict) and "error" in tool_res and tool_res["error"] is not None
+        err_msg = tool_res["error"] if (isinstance(tool_res, dict) and "error" in tool_res) else None
+        is_sandboxed = tool_res.get("sandboxed") if isinstance(tool_res, dict) else None
 
         trace_entry = {
             "step_id": step_id,
             "tool_name": tool_name,
             "args": arguments,
             "result": tool_res,
+            "reasoning": selection.reasoning if selection else None,
+            "sandboxed": is_sandboxed,
             "error": err_msg
         }
         execution_trace.append(trace_entry)
