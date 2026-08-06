@@ -220,3 +220,171 @@ def clear_all_thread_messages():
         conn.close()
     except Exception as e:
         logger.error(f"Errore azzeramento tabella thread_messages: {e}")
+
+
+def backfill_from_state_history(thread_id: str, app_graph) -> List[Dict[str, Any]]:
+    """
+    Ricostruisce i turni di conversazione dallo state history di LangGraph
+    e li salva nello store per accesso futuro istantaneo.
+    
+    Viene invocata solo se get_thread_messages() restituisce [] per un thread
+    che esiste nei checkpoint.
+    """
+    if not thread_id or not app_graph:
+        return []
+
+    try:
+        cfg = {"configurable": {"thread_id": thread_id}}
+        history = list(app_graph.get_state_history(cfg))
+    except Exception as e:
+        logger.warning(f"Errore lettura state history per thread '{thread_id}': {e}")
+        return []
+
+    if not history:
+        return []
+
+    # Raccoglie i turni completati (snapshot terminali dove next == ())
+    # L'history è in ordine reverse-cronologico, quindi reversed() dà l'ordine corretto
+    completed_turns = []
+    seen_tasks = set()
+
+    for snap in reversed(history):
+        next_nodes = snap.next
+        # Solo snapshot terminali (fine turno)
+        if next_nodes != ():
+            continue
+
+        values = snap.values
+        task = values.get("task")
+        final_response = values.get("final_response")
+
+        if not task or not final_response:
+            continue
+        if task in seen_tasks:
+            continue
+        seen_tasks.add(task)
+
+        mode = values.get("mode")
+        plan_dict = values.get("plan", {})
+        execution_trace = values.get("execution_trace")
+        plan_structure = values.get("plan_structure")
+        rollback_trace = values.get("rollback_trace")
+
+        # Fallback: execution_trace potrebbe essere dentro plan.execution_log
+        if not execution_trace and isinstance(plan_dict, dict):
+            execution_trace = plan_dict.get("execution_log")
+
+        # Fallback: plan_structure potrebbe essere dentro plan
+        if not plan_structure and isinstance(plan_dict, dict):
+            plan_structure = plan_dict.get("plan_structure")
+
+        tool_used = plan_dict.get("tool_name") if isinstance(plan_dict, dict) else None
+        plan_steps = plan_dict.get("plan_steps") if isinstance(plan_dict, dict) else None
+
+        completed_turns.append({
+            "task": task,
+            "mode": mode,
+            "final_response": final_response,
+            "tool_used": tool_used,
+            "plan_steps": plan_steps,
+            "plan_structure": plan_structure,
+            "execution_trace": execution_trace,
+            "rollback_trace": rollback_trace,
+        })
+
+    if not completed_turns:
+        return []
+
+    # Salva nello store SQLite con timestamp sintetici sequenziali
+    init_db()
+    conn = _get_conn()
+    cursor = conn.cursor()
+    all_messages = []
+
+    try:
+        base_ts = time.time() - (len(completed_turns) * 60)  # Timestamp sintetici, 1 min di distanza
+
+        for idx, turn in enumerate(completed_turns):
+            ts = base_ts + (idx * 60)
+            time_str = time.strftime("%H:%M", time.localtime(ts))
+            user_msg_id = f"backfill_user_{thread_id}_{idx}"
+            ast_msg_id = f"backfill_ast_{thread_id}_{idx}"
+
+            # Salva messaggio utente
+            cursor.execute("""
+                INSERT OR IGNORE INTO thread_messages
+                (thread_id, message_id, sender, content, timestamp)
+                VALUES (?, ?, ?, ?, ?)
+            """, (thread_id, user_msg_id, "user", turn["task"], time_str))
+
+            all_messages.append({
+                "id": user_msg_id,
+                "sender": "user",
+                "content": turn["task"],
+                "timestamp": time_str,
+                "mode": None,
+                "tool_used": None,
+                "reasoning": None,
+                "plan_steps": None,
+                "plan_structure": None,
+                "execution_trace": None,
+                "rollback_trace": None,
+                "isError": False
+            })
+
+            # Prepara contenuto risposta assistente
+            resp_text = turn["final_response"] or ""
+            if isinstance(resp_text, str):
+                resp_text = re.sub(r'\[Mode:\s*[A-Za-z]+\]\n?', '', resp_text, flags=re.IGNORECASE).strip()
+
+            et = turn.get("execution_trace")
+            et_json = json.dumps(et, ensure_ascii=False) if et else None
+            ps = turn.get("plan_steps")
+            ps_json = json.dumps(ps, ensure_ascii=False) if ps else None
+            pst = turn.get("plan_structure")
+            pst_json = json.dumps(pst, ensure_ascii=False) if pst else None
+            rt = turn.get("rollback_trace")
+            rt_json = json.dumps(rt, ensure_ascii=False) if rt else None
+
+            reasoning = None
+            if et and isinstance(et, list):
+                for tr in et:
+                    if isinstance(tr, dict) and tr.get("reasoning"):
+                        reasoning = tr["reasoning"]
+                        break
+
+            cursor.execute("""
+                INSERT OR IGNORE INTO thread_messages
+                (thread_id, message_id, sender, content, timestamp, mode, tool_used, reasoning,
+                 plan_steps_json, plan_structure_json, execution_trace_json, rollback_trace_json, is_error)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """, (
+                thread_id, ast_msg_id, "assistant", resp_text, time_str,
+                turn.get("mode"), turn.get("tool_used"), reasoning,
+                ps_json, pst_json, et_json, rt_json, 0
+            ))
+
+            all_messages.append({
+                "id": ast_msg_id,
+                "sender": "assistant",
+                "content": resp_text,
+                "timestamp": time_str,
+                "mode": turn.get("mode"),
+                "tool_used": turn.get("tool_used"),
+                "reasoning": reasoning,
+                "plan_steps": ps,
+                "plan_structure": pst,
+                "execution_trace": et,
+                "rollback_trace": rt,
+                "isError": False
+            })
+
+        conn.commit()
+        logger.info(f"Backfill completato per thread '{thread_id}': {len(completed_turns)} turni ricostruiti.")
+    except Exception as e:
+        logger.error(f"Errore backfill thread '{thread_id}': {e}")
+        all_messages = []
+    finally:
+        conn.close()
+
+    return all_messages

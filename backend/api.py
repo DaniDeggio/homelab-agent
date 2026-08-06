@@ -121,6 +121,13 @@ async def list_threads():
             if not tid:
                 continue
             last_msg = thread_store.get_last_message(tid)
+
+            # Se non c'è last_message, tenta backfill da LangGraph per popolare lo store
+            if last_msg is None and count > 0:
+                backfilled = thread_store.backfill_from_state_history(tid, app_graph)
+                if backfilled:
+                    last_msg = thread_store.get_last_message(tid)
+
             summaries.append(ThreadSummary(
                 thread_id=tid,
                 last_message=last_msg,
@@ -140,12 +147,25 @@ async def get_thread(thread_id: str):
         count = cursor.fetchone()[0]
         conn.close()
         
+        # 1. Prova lo store locale (istantaneo)
         stored_messages = thread_store.get_thread_messages(thread_id)
 
-        agent_id = letta_client.create_thread(thread_id)
-        raw_messages = letta_client.get_messages(agent_id) if agent_id else []
-        clean_messages = letta_client.filter_clean_messages(raw_messages)
-        
+        # 2. Se vuoto ma il thread ha checkpoint, ricostruisci da LangGraph state history
+        if not stored_messages and count > 0:
+            stored_messages = thread_store.backfill_from_state_history(thread_id, app_graph)
+
+        # 3. Letta come fonte supplementare opzionale (mai bloccante)
+        clean_messages = []
+        agent_id = None
+        try:
+            agent_id = letta_client.create_thread(thread_id)
+            if agent_id:
+                raw_messages = letta_client.get_messages(agent_id)
+                clean_messages = letta_client.filter_clean_messages(raw_messages) if raw_messages else []
+        except Exception as letta_err:
+            import logging
+            logging.getLogger("api").warning(f"Letta non raggiungibile per thread '{thread_id}': {letta_err}")
+
         return {
             "thread_id": thread_id,
             "agent_id": agent_id,
@@ -169,10 +189,13 @@ async def delete_single_thread(thread_id: str):
 
         thread_store.delete_thread_messages(thread_id)
 
-        # Delete from Letta if agent exists
-        agent_id = letta_client.create_thread(thread_id)
-        if agent_id:
-            letta_client.delete_thread(agent_id)
+        # Delete from Letta if agent exists (non-blocking)
+        try:
+            agent_id = letta_client.create_thread(thread_id)
+            if agent_id:
+                letta_client.delete_thread(agent_id)
+        except Exception:
+            pass
 
         return {"status": "deleted", "thread_id": thread_id, "deleted_checkpoints": deleted_rows}
     except Exception as e:
