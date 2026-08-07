@@ -363,7 +363,9 @@ def chat_graph_node(state: AgentState) -> AgentState:
     elif "barzelletta" in task_lower or "storia" in task_lower:
         ans = "Perché i programmatori preferiscono la modalità scura? Perché la luce attira gli insetti (bugs)!"
     else:
+        now_str = datetime.now().strftime('%A %d %B %Y, %H:%M:%S')
         system_prompt = (
+            f"Data e Ora Corrente del Sistema: {now_str}\n"
             "Sei l'Agente AI dell'Homelab Proxmox VE. Rispondi in modo naturale, simpatico e utile in italiano. "
             f"Contesto memoria conversazionale:\n{memory_context}"
         )

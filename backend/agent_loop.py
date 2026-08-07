@@ -1,5 +1,6 @@
 import json
 import logging
+from datetime import datetime
 from typing import Dict, Any, List, Optional
 from mode_policy import get_mode_policy
 from registry.manager import get_registry_manager
@@ -30,7 +31,12 @@ def run_agent_loop(
     # Se la modalità non ammette tool (es. chat) o il catalogo ammessi è vuoto
     if policy.max_tool_calls <= 0 or not available_tools:
         if call_llm_fn:
-            sys_prompt = f"Sei l'Agente AI dell'Homelab Proxmox VE. Rispondi in italiano.\nContesto memoria:\n{memory_context or ''}"
+            now_str = datetime.now().strftime('%A %d %B %Y, %H:%M:%S')
+            sys_prompt = (
+                f"Data e Ora Corrente del Sistema: {now_str}\n"
+                f"Sei l'Agente AI dell'Homelab Proxmox VE. Rispondi in italiano.\n"
+                f"Contesto memoria:\n{memory_context or ''}"
+            )
             ans = call_llm_fn(task, system_prompt=sys_prompt)
             if ans:
                 return {"final_response": ans, "execution_trace": []}
@@ -42,11 +48,17 @@ def run_agent_loop(
     for step_id in range(1, policy.max_tool_calls + 1):
         obs_context = "\n".join(history_observations) if history_observations else "Nessuna azione eseguita finora."
         
+        now_str = datetime.now().strftime('%A %d %B %Y, %H:%M:%S')
         system_prompt = (
+            f"Data e Ora Corrente del Sistema: {now_str}\n"
             f"Sei l'Agente AI dell'Homelab Proxmox (modalità: {mode.upper()}).\n"
             f"Catalogo tool disponibili per questa modalità:\n{catalog_str}\n\n"
             f"Contesto memoria conversazionale:\n{memory_context or ''}\n\n"
             f"Storico azioni eseguite in questo turno:\n{obs_context}\n\n"
+            "REGOLE IMPORTANTI PER LE QUERY DI RICERCA WEB:\n"
+            "- NON aggiungere anni passati (es. '2024 2025') alle query di ricerca a meno che l'utente non lo richieda esplicitamente.\n"
+            "- Usa query naturali e concise (es. 'Artemis II mission results' invece di 'Artemis 2 mission results 2024 2025').\n"
+            "- Per notizie recenti usa termini come 'latest' o 'aggiornamento' senza specificare anni.\n\n"
             "Se devi chiamare un tool, imposta tool_needed=true, seleziona tool_name e inserisci gli argomenti.\n"
             "Se la richiesta è stata soddisfatta o non servono altri tool, imposta tool_needed=false, "
             "inserisci la tua motivazione interna in 'reasoning' e FORNISCI LA RISPOSTA FINALE UTILE E COMPLETA PER L'UTENTE in 'final_answer'."
