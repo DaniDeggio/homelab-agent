@@ -114,8 +114,42 @@ def _resolve_ddg_redirect(raw_url: str) -> str:
 
 
 # ── Search Result Extraction ──
+
+def _search_ddgs_library(query: str, count: int = 8, time_filter: Optional[str] = None) -> List[Dict[str, str]]:
+    """Search using duckduckgo-search library (primary provider). Bypasses CAPTCHAs."""
+    try:
+        from duckduckgo_search import DDGS
+    except ImportError:
+        logger.warning("duckduckgo-search package not installed; skipping DDGS provider")
+        return []
+
+    timelimit = None
+    if time_filter:
+        time_map = {"day": "d", "week": "w", "month": "m", "year": "y"}
+        timelimit = time_map.get(time_filter)
+
+    try:
+        ddgs = DDGS()
+        raw = ddgs.text(query, max_results=count, timelimit=timelimit)
+        results = []
+        for item in raw:
+            url = item.get("href", "")
+            if not url:
+                continue
+            results.append({
+                "title": item.get("title", ""),
+                "url": url,
+                "snippet": item.get("body", ""),
+            })
+        logger.info(f"DDGS library returned {len(results)} results for: {query}")
+        return results
+    except Exception as e:
+        logger.warning(f"DDGS library search failed: {e}")
+        return []
+
+
 def _search_duckduckgo_html(query: str, count: int = 8) -> List[Dict[str, str]]:
-    """Search DuckDuckGo HTML lite and return structured results with titles, URLs and snippets."""
+    """Fallback: Search DuckDuckGo HTML lite (may get CAPTCHAed from server IPs)."""
     headers = {"User-Agent": _USER_AGENT}
     results = []
 
@@ -131,8 +165,11 @@ def _search_duckduckgo_html(query: str, count: int = 8) -> List[Dict[str, str]]:
             return results
 
         text = res.text
-        # Extract result blocks: each .result contains a link (.result__a) and snippet (.result__snippet)
-        # Parse link href + title
+        # Detect CAPTCHA
+        if "anomaly-modal" in text or "Select all squares" in text:
+            logger.warning("DDG HTML returned CAPTCHA page, skipping")
+            return results
+
         link_pattern = re.compile(
             r'<a[^>]+class="[^"]*result__a[^"]*"[^>]*href="([^"]*)"[^>]*>(.*?)</a>',
             re.DOTALL | re.IGNORECASE
@@ -147,7 +184,6 @@ def _search_duckduckgo_html(query: str, count: int = 8) -> List[Dict[str, str]]:
 
         for i, (raw_href, raw_title) in enumerate(links[:count]):
             url = _resolve_ddg_redirect(raw_href)
-            # Skip DDG internal links
             try:
                 host = urlparse(url).hostname or ""
                 if host.endswith("duckduckgo.com") or not host:
@@ -163,6 +199,7 @@ def _search_duckduckgo_html(query: str, count: int = 8) -> List[Dict[str, str]]:
             if url and title:
                 results.append({"title": title, "url": url, "snippet": snippet})
 
+        logger.info(f"DDG HTML returned {len(results)} results")
     except Exception as e:
         logger.warning(f"DDG HTML search error: {e}")
 
@@ -190,6 +227,24 @@ def _search_duckduckgo_api(query: str) -> List[Dict[str, str]]:
     except Exception as e:
         logger.debug(f"DDG API error (non-critical): {e}")
     return results
+
+
+def _search_with_fallback(query: str, count: int = 8, time_filter: Optional[str] = None) -> List[Dict[str, str]]:
+    """Search with provider fallback chain: DDGS library -> DDG HTML -> DDG Instant Answer API."""
+    # 1. Primary: DDGS library (handles anti-bot internally)
+    results = _search_ddgs_library(query, count=count, time_filter=time_filter)
+    if results:
+        return results
+
+    # 2. Fallback: DDG HTML scraping
+    logger.info("DDGS library returned 0 results, trying DDG HTML fallback")
+    results = _search_duckduckgo_html(query, count=count)
+    if results:
+        return results
+
+    # 3. Last resort: DDG Instant Answer API (limited but no CAPTCHA)
+    logger.info("DDG HTML fallback returned 0 results, trying DDG Instant Answer API")
+    return _search_duckduckgo_api(query)
 
 
 # ── Page Content Fetching ──
@@ -285,16 +340,8 @@ class WebSearchRegistry(BaseToolRegistry):
         if time_filter:
             logger.info(f"Auto-detected time filter: {time_filter}")
 
-        # Step 1: Search DuckDuckGo HTML for structured results (titles + URLs + snippets)
-        search_results = _search_duckduckgo_html(query, count=8)
-
-        # Step 1b: Also try Instant Answer API for quick facts
-        api_results = _search_duckduckgo_api(query)
-        # Merge: add API results that aren't already in HTML results
-        existing_urls = {r["url"] for r in search_results}
-        for ar in api_results:
-            if ar["url"] and ar["url"] not in existing_urls:
-                search_results.insert(0, ar)
+        # Step 1: Search with provider fallback chain (DDGS lib -> HTML -> API)
+        search_results = _search_with_fallback(query, count=8, time_filter=time_filter)
 
         if not search_results:
             return {"query": query, "result": f"Nessun risultato trovato per '{query}'."}
