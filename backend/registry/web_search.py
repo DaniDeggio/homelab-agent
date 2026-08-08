@@ -22,9 +22,9 @@ _USER_AGENT = (
 )
 _SEARCH_TIMEOUT = 10
 _FETCH_TIMEOUT = 12
-_MAX_FETCH_PAGES = 3
+_MAX_FETCH_PAGES = 5
 _MAX_CONTENT_CHARS = 3000
-_MAX_WORKERS = 3
+_MAX_WORKERS = 4
 
 # ── Time-filter auto-detection ──
 _TIME_HINTS = {
@@ -64,12 +64,15 @@ def _simplify_query(query: str) -> str:
         "news", "updates", "status", "information",
         "ultime", "ultima", "ultimo", "notizie", "aggiornamenti",
         "informazioni", "recenti", "aggiornate",
-        "launched", "partita", "partito",
+        "launched", "launch", "partita", "partito",
+        "mission", "missione", "date", "details",
+        "and", "the", "about", "sulle", "sugli", "sullo", "sulla",
+        "dammi", "give", "me", "informazioni",
     ]
     words = query.split()
     cleaned = [w for w in words if w.lower() not in noise]
     result = " ".join(cleaned).strip()
-    return result if len(result) > 3 else query
+    return result if len(result) > 2 else query
 
 
 # ── Lightweight HTML text extractor (no external deps) ──
@@ -292,57 +295,68 @@ def _search_duckduckgo_api(query: str) -> List[Dict[str, str]]:
 def _search_with_fallback(query: str, count: int = 8, time_filter: Optional[str] = None) -> List[Dict[str, str]]:
     """Search with multi-tier provider fallback chain and automatic query reformulation.
     
-    Chain:
-    1. DDGS text (with time_filter)
-    2. DDGS text (without time_filter, if applicable)
-    3. DDGS news (for news-like queries)
+    Chain (broad-first to avoid time_filter killing valid results):
+    1. DDGS text (NO time_filter — broad search)
+    2. DDGS news (for news-like queries, no time_filter)
+    3. DDGS text + news with time_filter (if applicable)
     4. DDG HTML scraping
-    5. Simplified query via DDGS text (strip noise words)
+    5. Simplified query via DDGS text + news
     6. DDG Instant Answer API
     """
+    import time as _time
     is_news = _is_news_query(query)
 
-    # 1. Primary: DDGS library with time_filter
-    results = _search_ddgs_library(query, count=count, time_filter=time_filter)
+    # 1. Primary: DDGS library — ALWAYS try broad first (no time_filter)
+    results = _search_ddgs_library(query, count=count, time_filter=None)
     if results:
         return results
 
-    # 2. Retry without time_filter
-    if time_filter:
-        logger.info(f"DDGS library returned 0 results with time_filter='{time_filter}', retrying without time limit")
-        results = _search_ddgs_library(query, count=count, time_filter=None)
-        if results:
-            return results
+    # Small delay to avoid DDGS rate limiting between calls
+    _time.sleep(1.0)
 
-    # 3. Try DDGS news endpoint for news-like queries
+    # 2. Try DDGS news endpoint (no time_filter) for news-like queries
     if is_news:
         logger.info(f"Trying DDGS news endpoint for: {query}")
-        results = _search_ddgs_news(query, count=count, time_filter=time_filter)
+        results = _search_ddgs_news(query, count=count, time_filter=None)
         if results:
             return results
-        if time_filter:
-            results = _search_ddgs_news(query, count=count, time_filter=None)
+        _time.sleep(0.5)
+
+    # 3. If we have a time_filter, try DDGS text/news with it
+    if time_filter:
+        logger.info(f"Retrying DDGS with time_filter='{time_filter}'")
+        results = _search_ddgs_library(query, count=count, time_filter=time_filter)
+        if results:
+            return results
+        _time.sleep(0.5)
+        if is_news:
+            results = _search_ddgs_news(query, count=count, time_filter=time_filter)
             if results:
                 return results
 
     # 4. Fallback: DDG HTML scraping
-    logger.info("DDGS library returned 0 results, trying DDG HTML fallback")
+    logger.info("DDGS providers returned 0 results, trying DDG HTML fallback")
     results = _search_duckduckgo_html(query, count=count)
     if results:
         return results
 
     # 5. Query reformulation: simplify the query and retry
     simplified = _simplify_query(query)
-    if simplified != query and len(simplified) > 3:
+    if simplified.lower() != query.lower() and len(simplified) > 2:
         logger.info(f"Retrying with simplified query: '{simplified}' (original: '{query}')")
+        _time.sleep(1.0)
         results = _search_ddgs_library(simplified, count=count, time_filter=None)
         if results:
             return results
+        _time.sleep(0.5)
         # Also try news with simplified query
-        if is_news:
-            results = _search_ddgs_news(simplified, count=count, time_filter=None)
-            if results:
-                return results
+        results = _search_ddgs_news(simplified, count=count, time_filter=None)
+        if results:
+            return results
+        # And HTML with simplified
+        results = _search_duckduckgo_html(simplified, count=count)
+        if results:
+            return results
 
     # 6. Last resort: DDG Instant Answer API (limited but no CAPTCHA)
     logger.info("All search methods failed, trying DDG Instant Answer API")
@@ -441,10 +455,12 @@ class WebSearchRegistry(BaseToolRegistry):
 
         logger.info(f"Starting comprehensive web search for: {query}")
 
-        # Auto-detect time filter
-        time_filter = _detect_time_filter(query)
-        if time_filter:
-            logger.info(f"Auto-detected time filter: {time_filter}")
+        # Do NOT auto-detect time filter — let the query speak for itself.
+        # Auto time_filter (e.g. 'week') causes DDGS to return only recent
+        # results which are often irrelevant (e.g., NFL news instead of
+        # Artemis II which launched months ago). The LLM already formulates
+        # appropriate queries with freshness terms like 'latest'.
+        time_filter = None
 
         # Step 1: Search with provider fallback chain (DDGS lib -> HTML -> API)
         search_results = _search_with_fallback(query, count=8, time_filter=time_filter)
