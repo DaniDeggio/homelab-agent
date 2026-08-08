@@ -82,14 +82,19 @@ def run_agent_loop(
                 final_ans = selection.final_answer.strip()
             # 2. Se abbiamo eseguito dei tool ed abbiamo delle osservazioni, sintetizziamo la risposta per l'utente
             elif history_observations and call_llm_fn:
+                obs_text = "\n".join(history_observations)
+                if len(obs_text) > 4000:
+                    obs_text = obs_text[:4000] + "\n... [osservazioni troncate per brevità]"
                 summary_prompt = (
                     f"Task utente: '{task}'\n\n"
-                    f"Storico azioni e risultati dei tool eseguiti:\n" + "\n".join(history_observations) + "\n\n"
+                    f"Storico azioni e risultati dei tool eseguiti:\n{obs_text}\n\n"
                     f"Fornisci una risposta finale completa, chiara e ben formattata in italiano per l'utente. "
-                    f"Se sono stati elencati container o risorse, mostra una tabella o un elenco leggibile dei risultati rilevanti."
+                    f"Se sono stati elencati risultati di ricerca o risorse, mostra una sintesi chiare ed esaustiva."
                 )
                 syn_ans = call_llm_fn(summary_prompt)
-                final_ans = syn_ans if syn_ans else "Operazione completata con successo."
+                final_ans = syn_ans.strip() if (syn_ans and syn_ans.strip()) else (
+                    selection.reasoning if (selection and selection.reasoning) else "Operazione completata con successo."
+                )
             # 3. Se la richiesta non richiede tool (es. domande concettuali), generiamo una risposta diretta
             elif call_llm_fn:
                 direct_prompt = (
@@ -98,7 +103,9 @@ def run_agent_loop(
                     f"Contesto memoria:\n{memory_context or ''}"
                 )
                 syn_ans = call_llm_fn(direct_prompt)
-                final_ans = syn_ans if syn_ans else (selection.reasoning if (selection and selection.reasoning) else "Richiesta completata.")
+                final_ans = syn_ans.strip() if (syn_ans and syn_ans.strip()) else (
+                    selection.reasoning if (selection and selection.reasoning) else "Richiesta completata."
+                )
             else:
                 final_ans = selection.reasoning if (selection and selection.reasoning) else "Richiesta completata."
 
@@ -146,6 +153,18 @@ def run_agent_loop(
             logger.warning(f"Step {step_id}: tool '{tool_name}' restituito errore: {err_msg}")
 
     # Se abbiamo raggiunto il limite di step, generiamo una sintesi finale
-    summary_prompt = f"Sulla base delle seguenti azioni eseguite:\n" + "\n".join(history_observations) + f"\n\nFornisci la risposta finale alla richiesta dell'utente: '{task}'"
-    final_ans = call_llm_fn(summary_prompt) if call_llm_fn else "Azioni eseguite completate."
-    return {"final_response": final_ans, "execution_trace": execution_trace}
+    obs_text = "\n".join(history_observations)
+    if len(obs_text) > 4000:
+        obs_text = obs_text[:4000] + "\n... [osservazioni troncate per brevità]"
+
+    summary_prompt = (
+        f"Task utente: '{task}'\n\n"
+        f"Sulla base delle seguenti azioni e ricerche eseguite:\n{obs_text}\n\n"
+        f"Fornisci la risposta finale completa e ben formattata in italiano per l'utente."
+    )
+    syn_ans = call_llm_fn(summary_prompt) if call_llm_fn else None
+    if not syn_ans or not syn_ans.strip():
+        # Fallback sicuro: se l'LLM di sintesi fallisce, non restituire mai None!
+        syn_ans = "Informazioni recuperate con successo dai tool di ricerca. Consulta i dettagli nei log di esecuzione."
+
+    return {"final_response": syn_ans.strip(), "execution_trace": execution_trace}

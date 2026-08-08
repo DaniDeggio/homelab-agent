@@ -11,14 +11,14 @@ class ModePolicy(BaseModel):
 DEFAULT_MODE_POLICIES: Dict[str, ModePolicy] = {
     "chat": ModePolicy(
         mode="chat",
-        max_tool_calls=0,
-        allowed_registries=[],
-        allow_react_loop=False,
+        max_tool_calls=1,
+        allowed_registries=["web"],
+        allow_react_loop=True,
         timeout_seconds=15
     ),
     "ask": ModePolicy(
         mode="ask",
-        max_tool_calls=2,
+        max_tool_calls=3,
         allowed_registries=["web", "code"],
         allow_react_loop=True,
         timeout_seconds=30

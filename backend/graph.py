@@ -177,7 +177,7 @@ def _call_llm(prompt: str, system_prompt: str = None, max_tokens: int = 600, tem
         "chat_template_kwargs": {"enable_thinking": False}
     }
     try:
-        res = requests.post(url, json=payload, timeout=25)
+        res = requests.post(url, json=payload, timeout=45)
         if res.status_code == 200:
             msg_obj = res.json()["choices"][0]["message"]
             content = msg_obj.get("content")
@@ -351,37 +351,30 @@ def mode_router_node(state: AgentState) -> AgentState:
     return {"mode": classified}
 
 def chat_graph_node(state: AgentState) -> AgentState:
-    """Subgraph for free conversation."""
+    """Subgraph for free conversation & fast queries (with 1-step web search enabled)."""
     task = state.get("task", "")
     task_lower = task.lower()
     memory_context = state.get("memory_context") or ""
 
     if any(kw in task_lower for kw in ["chi sei", "presentati", "chi sei tu"]):
-        ans = "Sono l'agente AI del tuo homelab Proxmox. Posso gestire i container LXC, allocare IP con IPAM, gestire i record DNS Pi-hole, configurare Nginx Proxy Manager (NPM) e bootstrappare servizi con Agy."
-    elif any(kw in task_lower for kw in ["tool", "strument", "accesso", "cosa puoi fare", "proxmox"]):
+        ans = "Sono l'agente AI del tuo homelab Proxmox. Posso gestire i container LXC, allocare IP con IPAM, gestire i record DNS Pi-hole, configurare Nginx Proxy Manager (NPM), cercare notizie web ed eseguire codice in sandbox."
+        return {"plan": {"mode": "chat", "tool_needed": False, "direct_answer": ans}, "final_response": ans}
+    elif any(kw in task_lower for kw in ["tool", "strument", "accesso", "cosa puoi fare", "proxmox"]) and ("qual" in task_lower or "quali" in task_lower or "cosa" in task_lower or "lista" in task_lower):
         ans = _format_metamcp_tools_catalog()
-    elif "barzelletta" in task_lower or "storia" in task_lower:
-        ans = "Perché i programmatori preferiscono la modalità scura? Perché la luce attira gli insetti (bugs)!"
-    else:
-        now_str = datetime.now().strftime('%A %d %B %Y, %H:%M:%S')
-        system_prompt = (
-            f"Data e Ora Corrente del Sistema: {now_str}\n"
-            "Sei l'Agente AI dell'Homelab Proxmox VE. Rispondi in modo naturale, simpatico e utile in italiano. "
-            f"Contesto memoria conversazionale:\n{memory_context}"
-        )
-        llm_ans = _call_llm(task, system_prompt=system_prompt, max_tokens=512, temperature=0.5)
-        if llm_ans:
-            ans = llm_ans
-        elif "ciao" in task_lower or "salut" in task_lower:
-            if "debian" in memory_context.lower() or "alice" in memory_context.lower() or "alice" in task_lower:
-                ans = "Ciao Alice! Sono l'agente AI del tuo homelab Proxmox. Come posso aiutarti oggi?"
-            else:
-                ans = "Ciao! Sono l'agente AI del tuo homelab Proxmox. Come posso aiutarti oggi?"
-        else:
-            ans = f"Ho ricevuto la tua richiesta: '{task}'. Come posso esserti utile per la gestione dell'homelab?"
+        return {"plan": {"mode": "chat", "tool_needed": False, "direct_answer": ans}, "final_response": ans}
 
-    plan = {"mode": "chat", "tool_needed": False, "direct_answer": ans}
-    return {"plan": plan}
+    loop_res = run_agent_loop(
+        task=task,
+        mode="chat",
+        memory_context=memory_context,
+        call_llm_fn=_call_llm,
+        call_llm_structured_fn=_call_llm_structured
+    )
+
+    ans = loop_res.get("final_response", "")
+    trace = loop_res.get("execution_trace", [])
+    plan = {"mode": "chat", "tool_needed": len(trace) > 0, "direct_answer": ans, "execution_log": trace}
+    return {"plan": plan, "execution_trace": trace, "final_response": ans}
 
 def ask_graph_node(state: AgentState) -> AgentState:
     """Subgraph for memory & knowledge retrieval queries (with Web Search & Code Exec tools enabled)."""
