@@ -21,7 +21,7 @@ _USER_AGENT = (
     "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
 )
 _SEARCH_TIMEOUT = 10
-_FETCH_TIMEOUT = 8
+_FETCH_TIMEOUT = 12
 _MAX_FETCH_PAGES = 3
 _MAX_CONTENT_CHARS = 3000
 _MAX_WORKERS = 3
@@ -236,6 +236,12 @@ def _search_with_fallback(query: str, count: int = 8, time_filter: Optional[str]
     if results:
         return results
 
+    if time_filter:
+        logger.info(f"DDGS library returned 0 results with time_filter='{time_filter}', retrying without time limit")
+        results = _search_ddgs_library(query, count=count, time_filter=None)
+        if results:
+            return results
+
     # 2. Fallback: DDG HTML scraping
     logger.info("DDGS library returned 0 results, trying DDG HTML fallback")
     results = _search_duckduckgo_html(query, count=count)
@@ -252,8 +258,12 @@ def _fetch_page_content(url: str, timeout: int = _FETCH_TIMEOUT) -> Dict[str, An
     """Fetch a web page and extract its text content."""
     headers = {
         "User-Agent": _USER_AGENT,
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,image/avif,image/webp,*/*;q=0.8",
         "Accept-Language": "en-US,en;q=0.5,it;q=0.3",
+        "Upgrade-Insecure-Requests": "1",
+        "Sec-Fetch-Dest": "document",
+        "Sec-Fetch-Mode": "navigate",
+        "Sec-Fetch-Site": "cross-site",
     }
     try:
         res = requests.get(url, headers=headers, timeout=timeout, allow_redirects=True)

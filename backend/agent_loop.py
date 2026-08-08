@@ -6,6 +6,7 @@ from mode_policy import get_mode_policy
 from registry.manager import get_registry_manager
 from tool_schemas import ToolSelection, validate_tool_args
 from tool_catalog import format_catalog_for_prompt
+import config
 
 logger = logging.getLogger("agent_loop")
 
@@ -83,8 +84,8 @@ def run_agent_loop(
             # 2. Se abbiamo eseguito dei tool ed abbiamo delle osservazioni, sintetizziamo la risposta per l'utente
             elif history_observations and call_llm_fn:
                 obs_text = "\n".join(history_observations)
-                if len(obs_text) > 4000:
-                    obs_text = obs_text[:4000] + "\n... [osservazioni troncate per brevità]"
+                if len(obs_text) > config.TRUNCATION_LIMIT:
+                    obs_text = obs_text[:config.TRUNCATION_LIMIT] + "\n... [osservazioni troncate per brevità]"
                 summary_prompt = (
                     f"Task utente: '{task}'\n\n"
                     f"Storico azioni e risultati dei tool eseguiti:\n{obs_text}\n\n"
@@ -154,8 +155,8 @@ def run_agent_loop(
 
     # Se abbiamo raggiunto il limite di step, generiamo una sintesi finale
     obs_text = "\n".join(history_observations)
-    if len(obs_text) > 4000:
-        obs_text = obs_text[:4000] + "\n... [osservazioni troncate per brevità]"
+    if len(obs_text) > config.TRUNCATION_LIMIT:
+        obs_text = obs_text[:config.TRUNCATION_LIMIT] + "\n... [osservazioni troncate per brevità]"
 
     summary_prompt = (
         f"Task utente: '{task}'\n\n"

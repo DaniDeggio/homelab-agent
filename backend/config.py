@@ -22,6 +22,7 @@ LLAMA_CPP_URL = os.getenv("LLAMA_CPP_URL", "http://192.168.1.159:8080/v1")
 LETTA_URL = os.getenv("LETTA_URL", "http://192.168.1.177:8083")
 LETTA_API_KEY = os.getenv("LETTA_API_KEY", "")
 CHECKPOINT_DB_PATH = os.getenv("CHECKPOINT_DB_PATH", str(Path(__file__).parent / "checkpoints.db"))
+TRUNCATION_LIMIT = int(os.getenv("TRUNCATION_LIMIT", "40000"))
 
 # Firecracker Setup
 FIRECRACKER_API_URL = os.getenv("FIRECRACKER_API_URL", "http://192.168.1.69:8080")

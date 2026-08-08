@@ -176,17 +176,26 @@ def _call_llm(prompt: str, system_prompt: str = None, max_tokens: int = 600, tem
         "temperature": temperature,
         "chat_template_kwargs": {"enable_thinking": False}
     }
-    try:
-        res = requests.post(url, json=payload, timeout=45)
-        if res.status_code == 200:
-            msg_obj = res.json()["choices"][0]["message"]
-            content = msg_obj.get("content")
-            if not content and "reasoning_content" in msg_obj:
-                content = msg_obj.get("reasoning_content")
-            if content and content.strip():
-                return content.strip()
-    except Exception as e:
-        logger.warning(f"LLM completion call failed: {e}")
+    
+    max_retries = 2
+    for attempt in range(1, max_retries + 1):
+        try:
+            res = requests.post(url, json=payload, timeout=120)
+            if res.status_code == 200:
+                msg_obj = res.json()["choices"][0]["message"]
+                content = msg_obj.get("content")
+                if not content and "reasoning_content" in msg_obj:
+                    content = msg_obj.get("reasoning_content")
+                if content and content.strip():
+                    return content.strip()
+            else:
+                logger.warning(f"LLM call returned status {res.status_code}: {res.text}")
+                break
+        except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
+            logger.warning(f"LLM call attempt {attempt}/{max_retries} failed: {e}")
+        except Exception as e:
+            logger.warning(f"LLM completion call failed unexpectedly: {e}")
+            break
     return ""
 
 def _call_llm_structured(prompt: str, system_prompt: str, schema_cls: Any, max_tokens: int = 500, temperature: float = 0.0, max_retries: int = 3) -> Optional[Any]:
