@@ -28,11 +28,18 @@ _MAX_WORKERS = 3
 
 # ── Time-filter auto-detection ──
 _TIME_HINTS = {
-    "day": ["today", "oggi", "right now", "this morning", "adesso", "ultime ore", "latest", "breaking"],
+    "day": ["today", "oggi", "right now", "this morning", "adesso", "ultime ore", "breaking"],
     "week": ["this week", "questa settimana", "recent", "recenti", "notizie", "aggiornate", "aggiornamenti",
-             "last few days", "ultimi giorni", "news"],
+             "last few days", "ultimi giorni", "news", "latest", "ultime", "ultima", "ultimo"],
     "month": ["this month", "questo mese", "past month", "ultimo mese"],
 }
+
+# Keywords that signal the query is about news/current events
+_NEWS_KEYWORDS = [
+    "news", "notizie", "latest", "ultime", "ultima", "ultimo", "aggiornamenti",
+    "aggiornate", "recenti", "recent", "updates", "breaking", "launched",
+    "launch", "status", "partita", "partito",
+]
 
 
 def _detect_time_filter(query: str) -> Optional[str]:
@@ -42,6 +49,27 @@ def _detect_time_filter(query: str) -> Optional[str]:
         if any(h in q_lc for h in hints):
             return period
     return None
+
+
+def _is_news_query(query: str) -> bool:
+    """Detect if the query is likely about news/current events."""
+    q_lc = query.lower()
+    return any(kw in q_lc for kw in _NEWS_KEYWORDS)
+
+
+def _simplify_query(query: str) -> str:
+    """Strip filler words and freshness hints to create a simpler, broader query."""
+    noise = [
+        "latest", "recent", "new", "current", "breaking",
+        "news", "updates", "status", "information",
+        "ultime", "ultima", "ultimo", "notizie", "aggiornamenti",
+        "informazioni", "recenti", "aggiornate",
+        "launched", "partita", "partito",
+    ]
+    words = query.split()
+    cleaned = [w for w in words if w.lower() not in noise]
+    result = " ".join(cleaned).strip()
+    return result if len(result) > 3 else query
 
 
 # ── Lightweight HTML text extractor (no external deps) ──
@@ -148,6 +176,38 @@ def _search_ddgs_library(query: str, count: int = 8, time_filter: Optional[str] 
         return []
 
 
+def _search_ddgs_news(query: str, count: int = 8, time_filter: Optional[str] = None) -> List[Dict[str, str]]:
+    """Search using DDGS news endpoint for current events queries."""
+    try:
+        from duckduckgo_search import DDGS
+    except ImportError:
+        return []
+
+    timelimit = None
+    if time_filter:
+        time_map = {"day": "d", "week": "w", "month": "m", "year": "y"}
+        timelimit = time_map.get(time_filter)
+
+    try:
+        ddgs = DDGS()
+        raw = ddgs.news(query, max_results=count, timelimit=timelimit)
+        results = []
+        for item in raw:
+            url = item.get("url", "") or item.get("href", "")
+            if not url:
+                continue
+            results.append({
+                "title": item.get("title", ""),
+                "url": url,
+                "snippet": item.get("body", "") or item.get("excerpt", ""),
+            })
+        logger.info(f"DDGS news returned {len(results)} results for: {query}")
+        return results
+    except Exception as e:
+        logger.warning(f"DDGS news search failed: {e}")
+        return []
+
+
 def _search_duckduckgo_html(query: str, count: int = 8) -> List[Dict[str, str]]:
     """Fallback: Search DuckDuckGo HTML lite (may get CAPTCHAed from server IPs)."""
     headers = {"User-Agent": _USER_AGENT}
@@ -230,26 +290,62 @@ def _search_duckduckgo_api(query: str) -> List[Dict[str, str]]:
 
 
 def _search_with_fallback(query: str, count: int = 8, time_filter: Optional[str] = None) -> List[Dict[str, str]]:
-    """Search with provider fallback chain: DDGS library -> DDG HTML -> DDG Instant Answer API."""
-    # 1. Primary: DDGS library (handles anti-bot internally)
+    """Search with multi-tier provider fallback chain and automatic query reformulation.
+    
+    Chain:
+    1. DDGS text (with time_filter)
+    2. DDGS text (without time_filter, if applicable)
+    3. DDGS news (for news-like queries)
+    4. DDG HTML scraping
+    5. Simplified query via DDGS text (strip noise words)
+    6. DDG Instant Answer API
+    """
+    is_news = _is_news_query(query)
+
+    # 1. Primary: DDGS library with time_filter
     results = _search_ddgs_library(query, count=count, time_filter=time_filter)
     if results:
         return results
 
+    # 2. Retry without time_filter
     if time_filter:
         logger.info(f"DDGS library returned 0 results with time_filter='{time_filter}', retrying without time limit")
         results = _search_ddgs_library(query, count=count, time_filter=None)
         if results:
             return results
 
-    # 2. Fallback: DDG HTML scraping
+    # 3. Try DDGS news endpoint for news-like queries
+    if is_news:
+        logger.info(f"Trying DDGS news endpoint for: {query}")
+        results = _search_ddgs_news(query, count=count, time_filter=time_filter)
+        if results:
+            return results
+        if time_filter:
+            results = _search_ddgs_news(query, count=count, time_filter=None)
+            if results:
+                return results
+
+    # 4. Fallback: DDG HTML scraping
     logger.info("DDGS library returned 0 results, trying DDG HTML fallback")
     results = _search_duckduckgo_html(query, count=count)
     if results:
         return results
 
-    # 3. Last resort: DDG Instant Answer API (limited but no CAPTCHA)
-    logger.info("DDG HTML fallback returned 0 results, trying DDG Instant Answer API")
+    # 5. Query reformulation: simplify the query and retry
+    simplified = _simplify_query(query)
+    if simplified != query and len(simplified) > 3:
+        logger.info(f"Retrying with simplified query: '{simplified}' (original: '{query}')")
+        results = _search_ddgs_library(simplified, count=count, time_filter=None)
+        if results:
+            return results
+        # Also try news with simplified query
+        if is_news:
+            results = _search_ddgs_news(simplified, count=count, time_filter=None)
+            if results:
+                return results
+
+    # 6. Last resort: DDG Instant Answer API (limited but no CAPTCHA)
+    logger.info("All search methods failed, trying DDG Instant Answer API")
     return _search_duckduckgo_api(query)
 
 
