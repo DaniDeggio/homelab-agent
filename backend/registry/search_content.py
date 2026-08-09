@@ -1,0 +1,176 @@
+import re
+import copy
+import logging
+import requests
+from typing import List, Dict, Any
+from bs4 import BeautifulSoup
+import os
+
+logger = logging.getLogger(__name__)
+
+_USER_AGENT = (
+    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+    "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36"
+)
+
+# ----------------------------------------------------------------------
+# HTML extraction helpers
+# ----------------------------------------------------------------------
+def _extract_meta(soup: BeautifulSoup) -> dict:
+    """Pull meta description and keywords if present."""
+    description = ""
+    keywords = ""
+    desc_tag = soup.find("meta", attrs={"name": re.compile("description", re.I)})
+    if desc_tag and desc_tag.get("content"):
+        description = desc_tag["content"].strip()
+    kw_tag = soup.find("meta", attrs={"name": re.compile("keywords", re.I)})
+    if kw_tag and kw_tag.get("content"):
+        keywords = kw_tag["content"].strip()
+    return {"description": description, "keywords": keywords}
+
+def _extract_lists(soup: BeautifulSoup) -> List[List[str]]:
+    """Return a list of lists, each inner list representing a <ul>/<ol>."""
+    all_lists = []
+    for lst in soup.find_all(["ul", "ol"]):
+        items = [li.get_text(separator=" ", strip=True) for li in lst.find_all("li")]
+        if items:
+            all_lists.append(items)
+    return all_lists
+
+def _extract_tables(soup: BeautifulSoup) -> List[List[List[str]]]:
+    """Return a list of tables, each table is a list of rows, each row a list of cell texts."""
+    tables_data = []
+    for table in soup.find_all("table"):
+        rows = []
+        for tr in table.find_all("tr"):
+            cells = [td.get_text(separator=" ", strip=True) for td in tr.find_all(["td", "th"])]
+            if cells:
+                rows.append(cells)
+        if rows:
+            tables_data.append(rows)
+    return tables_data
+
+def _extract_code_blocks(soup: BeautifulSoup) -> List[str]:
+    """Collect text from <pre> and <code> blocks."""
+    blocks = []
+    for tag in soup.find_all(["pre", "code"]):
+        txt = tag.get_text(separator=" ", strip=True)
+        if txt:
+            blocks.append(txt)
+    return blocks
+
+def _empty_result(url: str, error: str = "") -> dict:
+    return {
+        "url": url,
+        "title": "",
+        "content": "",
+        "lists": [],
+        "tables": [],
+        "code_blocks": [],
+        "meta_description": "",
+        "meta_keywords": "",
+        "success": False,
+        "error": error,
+    }
+
+def fetch_webpage_content(url: str, timeout: int = 12) -> dict:
+    """Fetch and extract meaningful content from a webpage."""
+    headers = {
+        "User-Agent": _USER_AGENT,
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "en-US,en;q=0.5",
+    }
+    
+    try:
+        res = requests.get(url, headers=headers, timeout=timeout, allow_redirects=True)
+        if res.status_code >= 400:
+            return _empty_result(url, f"HTTP {res.status_code}")
+    except requests.Timeout:
+        return _empty_result(url, "Timeout")
+    except Exception as e:
+        return _empty_result(url, str(e))
+
+    content_type = res.headers.get("Content-Type", "").lower()
+    
+    # Handle plain text / json
+    is_html = "html" in content_type
+    is_json = "json" in content_type
+    url_path = url.lower().split("?", 1)[0].split("#", 1)[0]
+    looks_like_text = url_path.endswith((".md", ".txt", ".json"))
+
+    if not is_html and (content_type.startswith("text/") or is_json or looks_like_text):
+        text_body = res.text.strip()
+        return {
+            "url": url,
+            "title": os.path.basename(url_path) or url,
+            "content": text_body,
+            "lists": [],
+            "tables": [],
+            "code_blocks": [],
+            "meta_description": "",
+            "meta_keywords": "",
+            "success": bool(text_body),
+            "error": "" if text_body else "Empty response body",
+        }
+
+    # HTML handling
+    try:
+        soup = BeautifulSoup(res.text, "html.parser")
+    except Exception as e:
+        return _empty_result(url, f"ParseError: {e}")
+
+    title_tag = soup.find("title")
+    title_text = title_tag.get_text(strip=True) if title_tag else ""
+    meta_info = _extract_meta(soup)
+
+    main_content = ""
+    content_areas = soup.find_all(
+        ["main", "article", "section", "div"],
+        class_=re.compile("content|main|body|article|post|entry|text", re.I),
+    )
+    if content_areas:
+        for area in content_areas[:3]:
+            main_content += area.get_text(separator=" ", strip=True) + " "
+    main_content = re.sub(r"\s+", " ", main_content).strip()
+
+    if len(main_content) < 600:
+        body = soup.find("body")
+        if body:
+            body_copy = copy.copy(body)
+            for noise in body_copy.find_all(["script", "style", "noscript", "template", "nav", "header", "footer", "aside", "svg"]):
+                noise.extract()
+            body_text = re.sub(r"\s+", " ", body_copy.get_text(separator=" ", strip=True)).strip()
+            if len(body_text) > len(main_content):
+                main_content = body_text
+
+    result = {
+        "url": url,
+        "title": title_text,
+        "content": main_content,
+        "lists": _extract_lists(soup),
+        "tables": _extract_tables(soup),
+        "code_blocks": _extract_code_blocks(soup),
+        "meta_description": meta_info.get("description", ""),
+        "meta_keywords": meta_info.get("keywords", ""),
+        "success": True,
+        "error": "",
+    }
+    return result
+
+# ----------------------------------------------------------------------
+# Content summarization helpers
+# ----------------------------------------------------------------------
+def extract_key_points(text: str) -> List[str]:
+    points: List[str] = []
+    bullet_pat = re.compile(r"^\s*[-*•]\s+(.*)")
+    numbered_pat = re.compile(r"^\s*\d+[\.\)]\s+(.*)")
+    for line in text.splitlines():
+        m = bullet_pat.match(line) or numbered_pat.match(line)
+        if m:
+            points.append(m.group(1).strip())
+    return points[:8]
+
+def get_tldr(text: str, max_sentences: int = 3) -> str:
+    sentences = re.split(r"(?<=[.!?])\s+", text)
+    selected = [s.strip() for s in sentences if s][:max_sentences]
+    return " ".join(selected)
