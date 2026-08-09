@@ -55,15 +55,20 @@ Risposta (solo chat, ask, act o plan):"""
         "messages": [{"role": "user", "content": prompt}],
         "max_tokens": 64,
         "temperature": 0.0,
-        "chat_template_kwargs": {"enable_thinking": False}
+        "chat_template_kwargs": {"enable_thinking": True},
+        "reasoning_budget_tokens": 128
     }
 
     try:
         res = requests.post(url, json=payload, timeout=10)
         if res.status_code == 200:
             msg_obj = res.json()["choices"][0]["message"]
-            content = (msg_obj.get("content") or msg_obj.get("reasoning_content") or "").strip().lower()
-            match = re.search(r'\b(chat|ask|act|plan)\b', content)
+            raw_content = msg_obj.get("content") or ""
+            reasoning = msg_obj.get("reasoning_content") or msg_obj.get("thinking") or msg_obj.get("reasoning") or ""
+            
+            # Use raw_content if it has the answer, otherwise fallback to parsing reasoning just in case
+            full_text = f"{reasoning} {raw_content}".strip().lower()
+            match = re.search(r'\b(chat|ask|act|plan)\b', full_text)
             if match:
                 mode = match.group(1)
                 logger.info(f"Neural router classified mode={mode} for input='{user_input}'")

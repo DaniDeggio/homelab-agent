@@ -7,6 +7,7 @@ class ModePolicy(BaseModel):
     allowed_registries: List[str]
     allow_react_loop: bool
     timeout_seconds: int
+    reasoning_budget: int
 
 DEFAULT_MODE_POLICIES: Dict[str, ModePolicy] = {
     "chat": ModePolicy(
@@ -14,28 +15,32 @@ DEFAULT_MODE_POLICIES: Dict[str, ModePolicy] = {
         max_tool_calls=1,
         allowed_registries=["web"],
         allow_react_loop=True,
-        timeout_seconds=15
+        timeout_seconds=15,
+        reasoning_budget=512
     ),
     "ask": ModePolicy(
         mode="ask",
         max_tool_calls=3,
         allowed_registries=["web", "code"],
         allow_react_loop=True,
-        timeout_seconds=30
+        timeout_seconds=30,
+        reasoning_budget=1024
     ),
     "act": ModePolicy(
         mode="act",
         max_tool_calls=10,
         allowed_registries=["metamcp", "web", "code"],
         allow_react_loop=True,
-        timeout_seconds=120
+        timeout_seconds=120,
+        reasoning_budget=2048
     ),
     "plan": ModePolicy(
         mode="plan",
         max_tool_calls=15,
         allowed_registries=["metamcp", "web", "code"],
         allow_react_loop=True,
-        timeout_seconds=300
+        timeout_seconds=300,
+        reasoning_budget=-1
     ),
 }
 

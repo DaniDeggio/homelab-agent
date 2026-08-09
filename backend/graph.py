@@ -162,20 +162,25 @@ Riassunto:"""
     summary = _call_llm(prompt, system_prompt="Sei un assistente che riassume conversazioni in modo conciso.", max_tokens=512, temperature=0.3)
     return summary.strip() if summary else ""
 
-def _call_llm(prompt: str, system_prompt: str = None, max_tokens: int = 600, temperature: float = 0.3) -> str:
+def _call_llm(prompt: str, system_prompt: str = None, max_tokens: int = 600, temperature: float = 0.3, reasoning_budget: int = -1) -> str:
     url = f"{config.LLAMA_CPP_URL.rstrip('/')}/chat/completions"
     messages = []
     if system_prompt:
         messages.append({"role": "system", "content": system_prompt})
     messages.append({"role": "user", "content": prompt})
     
+    enable_thinking = reasoning_budget != 0
     payload = {
         "model": config.DEFAULT_MODEL,
         "messages": messages,
         "max_tokens": max_tokens,
         "temperature": temperature,
-        "chat_template_kwargs": {"enable_thinking": False}
+        "chat_template_kwargs": {"enable_thinking": enable_thinking}
     }
+    
+    if enable_thinking and reasoning_budget > 0:
+        payload["reasoning_budget_tokens"] = reasoning_budget
+
     
     max_retries = 2
     for attempt in range(1, max_retries + 1):
@@ -186,6 +191,11 @@ def _call_llm(prompt: str, system_prompt: str = None, max_tokens: int = 600, tem
                 content = msg_obj.get("content")
                 if not content and "reasoning_content" in msg_obj:
                     content = msg_obj.get("reasoning_content")
+                elif not content and "thinking" in msg_obj:
+                    content = msg_obj.get("thinking")
+                elif not content and "reasoning" in msg_obj:
+                    content = msg_obj.get("reasoning")
+                    
                 if content and content.strip():
                     return content.strip()
             else:
@@ -198,7 +208,7 @@ def _call_llm(prompt: str, system_prompt: str = None, max_tokens: int = 600, tem
             break
     return ""
 
-def _call_llm_structured(prompt: str, system_prompt: str, schema_cls: Any, max_tokens: int = 500, temperature: float = 0.0, max_retries: int = 3) -> Optional[Any]:
+def _call_llm_structured(prompt: str, system_prompt: str, schema_cls: Any, max_tokens: int = 500, temperature: float = 0.0, max_retries: int = 3, reasoning_budget: int = -1) -> Optional[Any]:
     """
     Chiama l'LLM richiedendo output conforme allo schema Pydantic.
     Effettua parsing + validazione con retry mirato ed iniezione dell'errore.
@@ -222,12 +232,14 @@ def _call_llm_structured(prompt: str, system_prompt: str, schema_cls: Any, max_t
                 f"Correggi e rispondi di nuovo SOLO con il JSON valido."
             )
 
-        raw = _call_llm(current_prompt, system_prompt=schema_prompt, max_tokens=max_tokens, temperature=temperature)
+        raw = _call_llm(current_prompt, system_prompt=schema_prompt, max_tokens=max_tokens, temperature=temperature, reasoning_budget=reasoning_budget)
         if not raw:
             last_error = "Nessuna risposta dal modello LLM"
             continue
 
+        from text_utils import strip_thinking
         clean = raw.strip()
+        clean = strip_thinking(clean)
         clean = re.sub(r'^```(?:json)?', '', clean)
         clean = re.sub(r'```$', '', clean).strip()
 

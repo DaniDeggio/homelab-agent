@@ -38,7 +38,7 @@ def run_agent_loop(
                 f"Sei l'Agente AI dell'Homelab Proxmox VE. Rispondi in italiano.\n"
                 f"Contesto memoria:\n{memory_context or ''}"
             )
-            ans = call_llm_fn(task, system_prompt=sys_prompt)
+            ans = call_llm_fn(task, system_prompt=sys_prompt, reasoning_budget=policy.reasoning_budget)
             if ans:
                 return {"final_response": ans, "execution_trace": []}
         return {"final_response": f"Ho ricevuto la tua richiesta: '{task}'.", "execution_trace": []}
@@ -77,7 +77,8 @@ def run_agent_loop(
             schema_cls=ToolSelection,
             max_tokens=600,
             temperature=0.0,
-            max_retries=2
+            max_retries=2,
+            reasoning_budget=policy.reasoning_budget
         )
 
         if not selection or not selection.tool_needed or not selection.tool_name:
@@ -95,7 +96,7 @@ def run_agent_loop(
                     f"Fornisci una risposta finale completa, chiara e ben formattata in italiano per l'utente. "
                     f"Se sono stati elencati risultati di ricerca o risorse, mostra una sintesi chiare ed esaustiva."
                 )
-                syn_ans = call_llm_fn(summary_prompt)
+                syn_ans = call_llm_fn(summary_prompt, reasoning_budget=policy.reasoning_budget)
                 final_ans = syn_ans.strip() if (syn_ans and syn_ans.strip()) else (
                     selection.reasoning if (selection and selection.reasoning) else "Operazione completata con successo."
                 )
@@ -106,7 +107,7 @@ def run_agent_loop(
                     f"Domanda: '{task}'\n"
                     f"Contesto memoria:\n{memory_context or ''}"
                 )
-                syn_ans = call_llm_fn(direct_prompt)
+                syn_ans = call_llm_fn(direct_prompt, reasoning_budget=policy.reasoning_budget)
                 final_ans = syn_ans.strip() if (syn_ans and syn_ans.strip()) else (
                     selection.reasoning if (selection and selection.reasoning) else "Richiesta completata."
                 )
@@ -166,7 +167,7 @@ def run_agent_loop(
         f"Sulla base delle seguenti azioni e ricerche eseguite:\n{obs_text}\n\n"
         f"Fornisci la risposta finale completa e ben formattata in italiano per l'utente."
     )
-    syn_ans = call_llm_fn(summary_prompt) if call_llm_fn else None
+    syn_ans = call_llm_fn(summary_prompt, reasoning_budget=policy.reasoning_budget) if call_llm_fn else None
     if not syn_ans or not syn_ans.strip():
         # Fallback sicuro: se l'LLM di sintesi fallisce, non restituire mai None!
         syn_ans = "Informazioni recuperate con successo dai tool di ricerca. Consulta i dettagli nei log di esecuzione."
