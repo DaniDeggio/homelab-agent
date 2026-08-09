@@ -5,6 +5,7 @@ class ChatRequest(BaseModel):
     input: str
     thread_id: Optional[str] = None
     force_mode: Optional[Literal["chat", "ask", "act", "plan"]] = None
+    reasoning_budget: Optional[int] = None
     execute: bool = False
 
 class ChatResponse(BaseModel):

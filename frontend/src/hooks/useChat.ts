@@ -79,7 +79,8 @@ export function useChat(currentThreadId: string | null, onThreadCreated?: (id: s
     async (
       input: string,
       mode: AgentMode | undefined,
-      execute: boolean
+      execute: boolean,
+      reasoningBudget?: number
     ) => {
       setChatError(null);
       isSendingRef.current = true;
@@ -110,6 +111,7 @@ export function useChat(currentThreadId: string | null, onThreadCreated?: (id: s
           thread_id: targetThreadId,
           force_mode: mode,
           execute,
+          reasoning_budget: reasoningBudget,
         });
 
         const assistantMsg = adaptChatResponseToMessage(response);

@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Send, Bot, User, Wrench, Sparkles, AlertTriangle, Play, Menu, Activity } from 'lucide-react';
+import { Send, Bot, User, Wrench, Sparkles, AlertTriangle, Play, Menu, Activity, Brain } from 'lucide-react';
 import type { FormattedMessage, AgentMode } from './api';
 import { PlanViewer } from './components/PlanViewer';
 import { ExecutionTraceViewer } from './components/ExecutionTraceViewer';
@@ -8,7 +8,7 @@ import { MarkdownRenderer } from './components/MarkdownRenderer';
 interface ChatProps {
   currentThreadId: string | null;
   messages: FormattedMessage[];
-  onSendMessage: (input: string, mode: AgentMode | undefined, execute: boolean) => Promise<void>;
+  onSendMessage: (input: string, mode: AgentMode | undefined, execute: boolean, reasoningBudget?: number) => Promise<void>;
   isLoading: boolean;
   error: string | null;
   onClearError: () => void;
@@ -29,6 +29,7 @@ export const Chat: React.FC<ChatProps> = ({
   const [input, setInput] = useState('');
   const [selectedMode, setSelectedMode] = useState<AgentMode | 'auto'>('auto');
   const [execute, setExecute] = useState<boolean>(true);
+  const [reasoningBudget, setReasoningBudget] = useState<number | undefined>(undefined);
 
   const messagesEndRef = useRef<HTMLDivElement>(null);
   const textareaRef = useRef<HTMLTextAreaElement>(null);
@@ -46,7 +47,7 @@ export const Chat: React.FC<ChatProps> = ({
     if (!input.trim() || isLoading) return;
 
     const modeToPass = selectedMode === 'auto' ? undefined : selectedMode;
-    onSendMessage(input.trim(), modeToPass, execute);
+    onSendMessage(input.trim(), modeToPass, execute, reasoningBudget);
     setInput('');
     if (textareaRef.current) {
       textareaRef.current.style.height = 'auto';
@@ -131,6 +132,26 @@ export const Chat: React.FC<ChatProps> = ({
             <Play size={12} className={execute ? 'text-emerald-400' : 'text-slate-500'} />
             <span className="text-[10px] sm:text-[11px] hidden xs:inline">Execute</span>
           </label>
+
+          {/* Reasoning Budget Dropdown */}
+          <div className="flex items-center bg-slate-900 border border-slate-800 rounded-lg px-2 py-1.5 text-xs gap-1.5 text-slate-400 hover:border-slate-700">
+            <Brain size={13} className="text-purple-400 shrink-0" />
+            <select
+              value={reasoningBudget === undefined ? 'default' : reasoningBudget}
+              onChange={(e) => {
+                const val = e.target.value;
+                setReasoningBudget(val === 'default' ? undefined : Number(val));
+              }}
+              className="bg-transparent text-xs text-slate-200 focus:outline-none cursor-pointer"
+              title="Reasoning Token Budget"
+            >
+              <option value="default" className="bg-slate-900 text-slate-200">Budget: Default</option>
+              <option value="128" className="bg-slate-900 text-slate-200">Fast (128t)</option>
+              <option value="512" className="bg-slate-900 text-slate-200">Balanced (512t)</option>
+              <option value="2048" className="bg-slate-900 text-slate-200">Deep Think (2048t)</option>
+              <option value="-1" className="bg-slate-900 text-slate-200">Unlimited (-1)</option>
+            </select>
+          </div>
 
           {/* Mobile Diagnostics Button */}
           {onOpenMobileToolLog && (

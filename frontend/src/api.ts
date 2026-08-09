@@ -13,6 +13,7 @@ export interface ChatRequest {
   input: string;
   thread_id?: string;
   force_mode?: AgentMode;
+  reasoning_budget?: number;
   execute?: boolean;
 }
 

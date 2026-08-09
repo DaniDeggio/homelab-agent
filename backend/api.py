@@ -35,12 +35,13 @@ def verify_api_key(x_api_key: Optional[str] = Security(api_key_header)):
             raise HTTPException(status_code=401, detail="Invalid or missing X-API-Key header")
     return x_api_key
 
-def run_agent_flow(task: str, thread_id: Optional[str], force_mode: Optional[str] = None, execute: bool = False) -> ChatResponse:
+def run_agent_flow(task: str, thread_id: Optional[str], force_mode: Optional[str] = None, execute: bool = False, reasoning_budget: Optional[int] = None) -> ChatResponse:
     effective_thread_id = thread_id or f"thread_{int(time.time() * 1000)}"
     initial_state = {
         "task": task,
         "thread_id": effective_thread_id,
         "force_mode": force_mode,
+        "reasoning_budget": reasoning_budget,
         "execute": execute,
         "agent_id": None,
         "memory_context": None,
@@ -89,23 +90,23 @@ async def health():
 
 @api.post("/v1/chat", response_model=ChatResponse, dependencies=[Depends(verify_api_key)])
 async def chat_endpoint(req: ChatRequest):
-    return run_agent_flow(req.input, req.thread_id, force_mode=req.force_mode, execute=req.execute)
+    return run_agent_flow(req.input, req.thread_id, force_mode=req.force_mode, execute=req.execute, reasoning_budget=req.reasoning_budget)
 
 @api.post("/v1/ask", response_model=ChatResponse, dependencies=[Depends(verify_api_key)])
 async def ask_endpoint(req: ChatRequest):
-    return run_agent_flow(req.input, req.thread_id, force_mode="ask", execute=req.execute)
+    return run_agent_flow(req.input, req.thread_id, force_mode="ask", execute=req.execute, reasoning_budget=req.reasoning_budget)
 
 @api.post("/v1/act", response_model=ChatResponse, dependencies=[Depends(verify_api_key)])
 async def act_endpoint(req: ChatRequest):
-    return run_agent_flow(req.input, req.thread_id, force_mode="act", execute=req.execute)
+    return run_agent_flow(req.input, req.thread_id, force_mode="act", execute=req.execute, reasoning_budget=req.reasoning_budget)
 
 @api.post("/v1/plan", response_model=ChatResponse, dependencies=[Depends(verify_api_key)])
 async def plan_endpoint(req: ChatRequest):
-    return run_agent_flow(req.input, req.thread_id, force_mode="plan", execute=req.execute)
+    return run_agent_flow(req.input, req.thread_id, force_mode="plan", execute=req.execute, reasoning_budget=req.reasoning_budget)
 
 @api.post("/v1/invoke", response_model=ChatResponse, dependencies=[Depends(verify_api_key)])
 async def invoke_endpoint(req: ChatRequest):
-    return run_agent_flow(req.input, req.thread_id, force_mode=req.force_mode, execute=req.execute)
+    return run_agent_flow(req.input, req.thread_id, force_mode=req.force_mode, execute=req.execute, reasoning_budget=req.reasoning_budget)
 
 @api.get("/v1/threads", response_model=List[ThreadSummary], dependencies=[Depends(verify_api_key)])
 async def list_threads():

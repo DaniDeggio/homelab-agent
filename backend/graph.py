@@ -84,6 +84,7 @@ class AgentState(TypedDict):
     task: str
     thread_id: Optional[str]
     force_mode: Optional[str]
+    reasoning_budget: Optional[int]
     execute: Optional[bool]
     agent_id: Optional[str]
     memory_context: Optional[str]
@@ -384,12 +385,15 @@ def chat_graph_node(state: AgentState) -> AgentState:
         ans = _format_metamcp_tools_catalog()
         return {"plan": {"mode": "chat", "tool_needed": False, "direct_answer": ans}, "final_response": ans}
 
+    policy = get_mode_policy("chat")
+    budget = state.get("reasoning_budget") if state.get("reasoning_budget") is not None else policy.reasoning_budget
+
     loop_res = run_agent_loop(
         task=task,
         mode="chat",
         memory_context=memory_context,
-        call_llm_fn=_call_llm,
-        call_llm_structured_fn=_call_llm_structured
+        call_llm_fn=lambda p, system_prompt=None, reasoning_budget=budget: _call_llm(p, system_prompt=system_prompt, reasoning_budget=reasoning_budget),
+        call_llm_structured_fn=lambda prompt, system_prompt, schema_cls, max_tokens=500, temperature=0.0, max_retries=2, reasoning_budget=budget: _call_llm_structured(prompt, system_prompt, schema_cls, max_tokens, temperature, max_retries, reasoning_budget=reasoning_budget)
     )
 
     ans = loop_res.get("final_response", "")
@@ -407,12 +411,15 @@ def ask_graph_node(state: AgentState) -> AgentState:
         ans = _format_metamcp_tools_catalog()
         return {"plan": {"mode": "ask", "tool_needed": False, "direct_answer": ans}, "final_response": ans}
 
+    policy = get_mode_policy("ask")
+    budget = state.get("reasoning_budget") if state.get("reasoning_budget") is not None else policy.reasoning_budget
+
     loop_res = run_agent_loop(
         task=task,
         mode="ask",
         memory_context=memory_context,
-        call_llm_fn=_call_llm,
-        call_llm_structured_fn=_call_llm_structured
+        call_llm_fn=lambda p, system_prompt=None, reasoning_budget=budget: _call_llm(p, system_prompt=system_prompt, reasoning_budget=reasoning_budget),
+        call_llm_structured_fn=lambda prompt, system_prompt, schema_cls, max_tokens=500, temperature=0.0, max_retries=2, reasoning_budget=budget: _call_llm_structured(prompt, system_prompt, schema_cls, max_tokens, temperature, max_retries, reasoning_budget=reasoning_budget)
     )
 
     ans = loop_res.get("final_response", "")
@@ -758,13 +765,16 @@ def act_graph_node(state: AgentState) -> AgentState:
         plan = {"mode": "act", "tool_needed": False, "direct_answer": ans}
         return {"plan": plan}
 
+    policy = get_mode_policy("act")
+    budget = state.get("reasoning_budget") if state.get("reasoning_budget") is not None else policy.reasoning_budget
+
     memory_context = state.get("memory_context") or ""
     loop_res = run_agent_loop(
         task=task,
         mode="act",
         memory_context=memory_context,
-        call_llm_fn=_call_llm,
-        call_llm_structured_fn=_call_llm_structured
+        call_llm_fn=lambda p, system_prompt=None, reasoning_budget=budget: _call_llm(p, system_prompt=system_prompt, reasoning_budget=reasoning_budget),
+        call_llm_structured_fn=lambda prompt, system_prompt, schema_cls, max_tokens=500, temperature=0.0, max_retries=2, reasoning_budget=budget: _call_llm_structured(prompt, system_prompt, schema_cls, max_tokens, temperature, max_retries, reasoning_budget=reasoning_budget)
     )
 
     ans = loop_res.get("final_response", "")
@@ -778,6 +788,9 @@ def plan_graph_node(state: AgentState) -> AgentState:
     task = state.get("task", "")
     memory_context = state.get("memory_context") or ""
 
+    policy = get_mode_policy("plan")
+    budget = state.get("reasoning_budget") if state.get("reasoning_budget") is not None else policy.reasoning_budget
+
     system_prompt = (
         "Sei l'Agente AI dell'Homelab Proxmox VE. "
         "Genera un piano d'azione numerato passo per passo (massimo 5 passaggi) specifico per soddisfare la richiesta dell'utente. "
@@ -785,7 +798,7 @@ def plan_graph_node(state: AgentState) -> AgentState:
         "Rispondi SOLAMENTE con la lista numerata dei passaggi di esecuzione."
     )
 
-    llm_plan = _call_llm(task, system_prompt=system_prompt, max_tokens=600, temperature=0.2)
+    llm_plan = _call_llm(task, system_prompt=system_prompt, max_tokens=600, temperature=0.2, reasoning_budget=budget)
     plan_steps = []
     if llm_plan:
         for line in llm_plan.split("\n"):
