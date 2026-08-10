@@ -167,11 +167,17 @@ Riassunto:"""
 def _call_llm(prompt: str, system_prompt: str = None, max_tokens: int = 600, temperature: float = 0.3, reasoning_budget: int = -1) -> str:
     url = f"{config.LLAMA_CPP_URL.rstrip('/')}/chat/completions"
     messages = []
+    enable_thinking = reasoning_budget != 0
+    if enable_thinking:
+        thinking_instruction = "IMPORTANT: Se devi ragionare o pensare prima di rispondere, DEVI racchiudere tutto il tuo processo mentale all'interno di tag <think> e </think>. Non mostrare il processo mentale fuori da questi tag."
+        if system_prompt:
+            system_prompt = f"{system_prompt}\n\n{thinking_instruction}"
+        else:
+            system_prompt = thinking_instruction
+
     if system_prompt:
         messages.append({"role": "system", "content": system_prompt})
     messages.append({"role": "user", "content": prompt})
-    
-    enable_thinking = reasoning_budget != 0
     payload = {
         "model": config.DEFAULT_MODEL,
         "messages": messages,
@@ -199,7 +205,8 @@ def _call_llm(prompt: str, system_prompt: str = None, max_tokens: int = 600, tem
                     content = msg_obj.get("reasoning")
                     
                 if content and content.strip():
-                    return content.strip()
+                    from text_utils import strip_thinking
+                    return strip_thinking(content.strip())
             else:
                 logger.warning(f"LLM call returned status {res.status_code}: {res.text}")
                 break
