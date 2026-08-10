@@ -64,10 +64,13 @@ def run_agent_loop(
             "- Per notizie recenti usa termini come 'latest' o 'aggiornamento' senza specificare anni.\n"
             "- Se una ricerca web ha restituito 'Nessun risultato trovato', NON ripetere la stessa identica query. "
             "Riformula COMPLETAMENTE la query: cambia lingua (italiano<->inglese), usa sinonimi, semplifica, o prova termini diversi.\n"
-            "  Esempio: se 'latest Artemis mission launch status' fallisce, prova 'Artemis II NASA' o 'missione Artemis partita'.\n\n"
-            "Se devi chiamare un tool, imposta tool_needed=true, seleziona tool_name e inserisci gli argomenti.\n"
-            "Se la richiesta è stata soddisfatta o non servono altri tool, imposta tool_needed=false, "
-            "inserisci la tua motivazione interna in 'reasoning' e FORNISCI LA RISPOSTA FINALE UTILE E COMPLETA PER L'UTENTE in 'final_answer'."
+            f"Hai a disposizione i seguenti tool: {available_tools_list}\n"
+            f"Valuta attentamente se è necessario utilizzare un tool per rispondere alla richiesta. "
+            f"REGOLA FONDAMENTALE: Se la richiesta riguarda eventi futuri, previsioni meteo, orari, date esatte (es. eclissi) o informazioni che non puoi conoscere con certezza, "
+            f"NON affidarti alla tua memoria interna. DEVI restituire tool_needed=True e usare il tool 'web_search' per ottenere dati reali e aggiornati.\n"
+            f"Se la risposta richiede azioni sul sistema (es. Proxmox, file, container), DEVI restituire tool_needed=True e specificare il tool corretto.\n"
+            f"Se la risposta può essere fornita con certezza assoluta usando la tua conoscenza interna, restituisci tool_needed=False.\n"
+            f"IMPORTANTE: Se devi ragionare, fallo liberamente. Il sistema processerà automaticamente il tuo reasoning_content. FORNISCI LA RISPOSTA FINALE UTILE E COMPLETA PER L'UTENTE in 'final_answer'."
         )
 
         if not call_llm_structured_fn:
@@ -95,8 +98,10 @@ def run_agent_loop(
                 summary_prompt = (
                     f"Task utente: '{task}'\n\n"
                     f"Storico azioni e risultati dei tool eseguiti:\n{obs_text}\n\n"
-                    f"Fornisci una risposta finale completa, chiara e ben formattata in italiano per l'utente. "
-                    f"Se sono stati elencati risultati di ricerca o risorse, mostra una sintesi chiara ed esaustiva."
+                    f"Fornisci una risposta finale all'utente, rigorosamente in lingua ITALIANA. "
+                    f"La risposta deve essere discorsiva, dettagliata ed esaustiva, non limitarti a un riassunto telegrafico. "
+                    f"Spiega i dettagli rilevanti in modo naturale. "
+                    f"Se sono stati usati tool di ricerca (es. web_search), cita o spiega le informazioni trovate in modo chiaro e completo."
                 )
                 syn_res = call_llm_fn(summary_prompt, reasoning_budget=policy.reasoning_budget)
                 syn_ans = syn_res.get("content", "") if syn_res else ""

@@ -14,6 +14,7 @@ export interface ChatRequest {
   thread_id?: string;
   force_mode?: AgentMode;
   reasoning_budget?: number;
+  reasoning_budget_tokens?: number;
   execute?: boolean;
 }
 

@@ -133,25 +133,7 @@ export const Chat: React.FC<ChatProps> = ({
             <span className="text-[10px] sm:text-[11px] hidden xs:inline">Execute</span>
           </label>
 
-          {/* Reasoning Budget Dropdown */}
-          <div className="flex items-center bg-slate-900 border border-slate-800 rounded-lg px-2 py-1.5 text-xs gap-1.5 text-slate-400 hover:border-slate-700">
-            <Brain size={13} className="text-purple-400 shrink-0" />
-            <select
-              value={reasoningBudget === undefined ? 'default' : reasoningBudget}
-              onChange={(e) => {
-                const val = e.target.value;
-                setReasoningBudget(val === 'default' ? undefined : Number(val));
-              }}
-              className="bg-transparent text-xs text-slate-200 focus:outline-none cursor-pointer"
-              title="Reasoning Token Budget"
-            >
-              <option value="default" className="bg-slate-900 text-slate-200">Budget: Default</option>
-              <option value="128" className="bg-slate-900 text-slate-200">Fast (128t)</option>
-              <option value="512" className="bg-slate-900 text-slate-200">Balanced (512t)</option>
-              <option value="2048" className="bg-slate-900 text-slate-200">Deep Think (2048t)</option>
-              <option value="-1" className="bg-slate-900 text-slate-200">Unlimited (-1)</option>
-            </select>
-          </div>
+
 
           {/* Mobile Diagnostics Button */}
           {onOpenMobileToolLog && (
@@ -245,7 +227,7 @@ export const Chat: React.FC<ChatProps> = ({
                               </div>
                               <ChevronDown size={14} className="group-open:rotate-180 transition-transform duration-300 ease-in-out opacity-70" />
                             </summary>
-                            <div className="px-4 py-3 text-slate-300/90 border-t border-slate-700/60 bg-slate-950/40 text-sm leading-relaxed italic whitespace-pre-wrap break-words font-serif">
+                            <div className="px-4 py-3 text-slate-300/90 border-t border-slate-700/60 bg-slate-950/40 text-sm leading-relaxed italic whitespace-pre-wrap break-words font-serif max-h-[300px] overflow-y-auto custom-scrollbar">
                               {msg.reasoning_content}
                             </div>
                           </details>
@@ -325,8 +307,30 @@ export const Chat: React.FC<ChatProps> = ({
       </div>
 
       {/* Input Bar */}
-      <div className="p-3 sm:p-4 border-t border-slate-800 bg-slate-900/80 backdrop-blur-md shrink-0">
-        <form onSubmit={handleSubmit} className="max-w-4xl mx-auto relative flex items-center">
+      <div className="p-3 sm:p-4 border-t border-slate-800 bg-slate-900/80 backdrop-blur-md shrink-0 flex flex-col gap-2">
+        <div className="max-w-4xl mx-auto w-full flex justify-end">
+          {/* Reasoning Budget Dropdown */}
+          <div className="flex items-center bg-slate-950 border border-slate-800 rounded-lg px-2 py-1 text-[11px] gap-1.5 text-slate-400 hover:border-slate-700 w-max shadow-sm">
+            <Brain size={12} className="text-purple-400 shrink-0" />
+            <select
+              value={reasoningBudget === undefined ? 'default' : reasoningBudget}
+              onChange={(e) => {
+                const val = e.target.value;
+                setReasoningBudget(val === 'default' ? undefined : Number(val));
+              }}
+              className="bg-transparent text-[11px] text-slate-300 focus:outline-none cursor-pointer"
+              title="Reasoning Token Budget"
+            >
+              <option value="default" className="bg-slate-900 text-slate-200">Budget: Default</option>
+              <option value="128" className="bg-slate-900 text-slate-200">Fast (128t)</option>
+              <option value="512" className="bg-slate-900 text-slate-200">Balanced (512t)</option>
+              <option value="2048" className="bg-slate-900 text-slate-200">Deep Think (2048t)</option>
+              <option value="4096" className="bg-slate-900 text-slate-200">Max Think (4096t)</option>
+              <option value="-1" className="bg-slate-900 text-slate-200">Unlimited (-1)</option>
+            </select>
+          </div>
+        </div>
+        <form onSubmit={handleSubmit} className="max-w-4xl mx-auto w-full relative flex items-center">
           <textarea
             ref={textareaRef}
             rows={1}
