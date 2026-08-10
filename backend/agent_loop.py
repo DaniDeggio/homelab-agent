@@ -64,7 +64,6 @@ def run_agent_loop(
             "- Per notizie recenti usa termini come 'latest' o 'aggiornamento' senza specificare anni.\n"
             "- Se una ricerca web ha restituito 'Nessun risultato trovato', NON ripetere la stessa identica query. "
             "Riformula COMPLETAMENTE la query: cambia lingua (italiano<->inglese), usa sinonimi, semplifica, o prova termini diversi.\n"
-            f"Hai a disposizione i seguenti tool: {available_tools_list}\n"
             f"Valuta attentamente se è necessario utilizzare un tool per rispondere alla richiesta. "
             f"REGOLA FONDAMENTALE: Se la richiesta riguarda eventi futuri, previsioni meteo, orari, date esatte (es. eclissi) o informazioni che non puoi conoscere con certezza, "
             f"NON affidarti alla tua memoria interna. DEVI restituire tool_needed=True e usare il tool 'web_search' per ottenere dati reali e aggiornati.\n"
