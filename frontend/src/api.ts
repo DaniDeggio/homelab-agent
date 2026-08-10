@@ -63,6 +63,7 @@ export interface ChatResponse {
   plan_structure?: PlanStructure;
   execution_trace?: ExecutionTraceItem[];
   rollback_trace?: RollbackAction[];
+  reasoning_content?: string;
   error?: string;
 }
 
@@ -101,6 +102,7 @@ export interface FormattedMessage {
   plan_structure?: PlanStructure;
   execution_trace?: ExecutionTraceItem[];
   rollback_trace?: RollbackAction[];
+  reasoning_content?: string;
   isError?: boolean;
 }
 

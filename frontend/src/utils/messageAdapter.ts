@@ -33,6 +33,7 @@ export function adaptChatResponseToMessage(
     plan_structure: response.plan_structure,
     execution_trace: response.execution_trace,
     rollback_trace: response.rollback_trace,
+    reasoning_content: response.reasoning_content,
     isError: Boolean(response.error),
   };
 }

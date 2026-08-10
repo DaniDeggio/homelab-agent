@@ -38,10 +38,12 @@ def run_agent_loop(
                 f"Sei l'Agente AI dell'Homelab Proxmox VE. Rispondi in italiano.\n"
                 f"Contesto memoria:\n{memory_context or ''}"
             )
-            ans = call_llm_fn(task, system_prompt=sys_prompt, reasoning_budget=policy.reasoning_budget)
-            if ans:
-                return {"final_response": ans, "execution_trace": []}
-        return {"final_response": f"Ho ricevuto la tua richiesta: '{task}'.", "execution_trace": []}
+            ans_res = call_llm_fn(task, system_prompt=sys_prompt, reasoning_budget=policy.reasoning_budget)
+            if ans_res:
+                ans = ans_res.get("content", "")
+                reasoning = ans_res.get("reasoning_content", "")
+                return {"final_response": ans, "execution_trace": [], "reasoning_content": reasoning}
+        return {"final_response": f"Ho ricevuto la tua richiesta: '{task}'.", "execution_trace": [], "reasoning_content": None}
 
     catalog_str = format_catalog_for_prompt(available_tools)
     history_observations = []
@@ -94,10 +96,11 @@ def run_agent_loop(
                     f"Task utente: '{task}'\n\n"
                     f"Storico azioni e risultati dei tool eseguiti:\n{obs_text}\n\n"
                     f"Fornisci una risposta finale completa, chiara e ben formattata in italiano per l'utente. "
-                    f"Se sono stati elencati risultati di ricerca o risorse, mostra una sintesi chiara ed esaustiva.\n"
-                    f"ATTENZIONE: NON stampare il tuo processo di ragionamento (es. 'Here is a thinking process...', 'Analyze the User's Request', ecc.). Fornisci SOLO e DIRETTAMENTE la risposta finale destinata all'utente, RIGOROSAMENTE IN LINGUA ITALIANA."
+                    f"Se sono stati elencati risultati di ricerca o risorse, mostra una sintesi chiara ed esaustiva."
                 )
-                syn_ans = call_llm_fn(summary_prompt, reasoning_budget=policy.reasoning_budget)
+                syn_res = call_llm_fn(summary_prompt, reasoning_budget=policy.reasoning_budget)
+                syn_ans = syn_res.get("content", "") if syn_res else ""
+                reasoning_content = syn_res.get("reasoning_content", "") if syn_res else ""
                 final_ans = syn_ans.strip() if (syn_ans and syn_ans.strip()) else (
                     selection.reasoning if (selection and selection.reasoning) else "Operazione completata con successo."
                 )
@@ -106,17 +109,19 @@ def run_agent_loop(
                 direct_prompt = (
                     f"Rispondi in modo completo, chiaro ed esaustivo alla seguente domanda dell'utente in italiano.\n"
                     f"Domanda: '{task}'\n"
-                    f"Contesto memoria:\n{memory_context or ''}\n\n"
-                    f"ATTENZIONE: NON stampare il tuo processo di ragionamento (es. 'Here is a thinking process...', 'Analyze the User's Request', ecc.). Fornisci SOLO e DIRETTAMENTE la risposta finale destinata all'utente, RIGOROSAMENTE IN LINGUA ITALIANA."
+                    f"Contesto memoria:\n{memory_context or ''}"
                 )
-                syn_ans = call_llm_fn(direct_prompt, reasoning_budget=policy.reasoning_budget)
+                syn_res = call_llm_fn(direct_prompt, reasoning_budget=policy.reasoning_budget)
+                syn_ans = syn_res.get("content", "") if syn_res else ""
+                reasoning_content = syn_res.get("reasoning_content", "") if syn_res else ""
                 final_ans = syn_ans.strip() if (syn_ans and syn_ans.strip()) else (
                     selection.reasoning if (selection and selection.reasoning) else "Richiesta completata."
                 )
             else:
                 final_ans = selection.reasoning if (selection and selection.reasoning) else "Richiesta completata."
+                reasoning_content = None
 
-            return {"final_response": final_ans, "execution_trace": execution_trace}
+            return {"final_response": final_ans, "execution_trace": execution_trace, "reasoning_content": reasoning_content}
 
         tool_name = selection.tool_name
         arguments = selection.arguments or {}
@@ -167,12 +172,14 @@ def run_agent_loop(
     summary_prompt = (
         f"Task utente: '{task}'\n\n"
         f"Sulla base delle seguenti azioni e ricerche eseguite:\n{obs_text}\n\n"
-        f"Fornisci la risposta finale completa e ben formattata in italiano per l'utente.\n"
-        f"ATTENZIONE: NON stampare il tuo processo di ragionamento (es. 'Here is a thinking process...', 'Analyze the User's Request', ecc.). Fornisci SOLO e DIRETTAMENTE la risposta finale destinata all'utente, RIGOROSAMENTE IN LINGUA ITALIANA."
+        f"Fornisci la risposta finale completa e ben formattata in italiano per l'utente."
     )
-    syn_ans = call_llm_fn(summary_prompt, reasoning_budget=policy.reasoning_budget) if call_llm_fn else None
+    syn_res = call_llm_fn(summary_prompt, reasoning_budget=policy.reasoning_budget) if call_llm_fn else None
+    syn_ans = syn_res.get("content", "") if syn_res else ""
+    reasoning_content = syn_res.get("reasoning_content", "") if syn_res else ""
+    
     if not syn_ans or not syn_ans.strip():
         # Fallback sicuro: se l'LLM di sintesi fallisce, non restituire mai None!
         syn_ans = "Informazioni recuperate con successo dai tool di ricerca. Consulta i dettagli nei log di esecuzione."
 
-    return {"final_response": syn_ans.strip(), "execution_trace": execution_trace}
+    return {"final_response": syn_ans.strip(), "execution_trace": execution_trace, "reasoning_content": reasoning_content}

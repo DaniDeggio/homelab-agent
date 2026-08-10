@@ -95,6 +95,7 @@ class AgentState(TypedDict):
     tool_result: Optional[Any]
     execution_trace: Optional[List[Dict[str, Any]]]
     final_response: str
+    reasoning_content: Optional[str]
 
 
 client = MetaMCPClient(base_url=config.METAMCP_URL, api_key=config.METAMCP_API_KEY)
@@ -161,15 +162,16 @@ Conversazione:
 {text}
 
 Riassunto:"""
-    summary = _call_llm(prompt, system_prompt="Sei un assistente che riassume conversazioni in modo conciso.", max_tokens=512, temperature=0.3)
+    summary_res = _call_llm(prompt, system_prompt="Sei un assistente che riassume conversazioni in modo conciso.", max_tokens=512, temperature=0.3)
+    summary = summary_res.get("content", "") if isinstance(summary_res, dict) else ""
     return summary.strip() if summary else ""
 
-def _call_llm(prompt: str, system_prompt: str = None, max_tokens: int = 600, temperature: float = 0.3, reasoning_budget: int = -1) -> str:
+def _call_llm(prompt: str, system_prompt: str = None, max_tokens: int = 600, temperature: float = 0.3, reasoning_budget: int = -1) -> dict:
     url = f"{config.LLAMA_CPP_URL.rstrip('/')}/chat/completions"
     messages = []
     enable_thinking = reasoning_budget != 0
     if enable_thinking:
-        thinking_instruction = "IMPORTANT: Se devi ragionare o pensare prima di rispondere, DEVI racchiudere tutto il tuo processo mentale all'interno di tag <think> e </think>. Non mostrare il processo mentale fuori da questi tag."
+        thinking_instruction = "IMPORTANT: Se devi ragionare, fallo liberamente. Il sistema processerà automaticamente il tuo reasoning_content."
         if system_prompt:
             system_prompt = f"{system_prompt}\n\n{thinking_instruction}"
         else:
@@ -196,17 +198,18 @@ def _call_llm(prompt: str, system_prompt: str = None, max_tokens: int = 600, tem
             res = requests.post(url, json=payload, timeout=120)
             if res.status_code == 200:
                 msg_obj = res.json()["choices"][0]["message"]
-                content = msg_obj.get("content")
-                if not content and "reasoning_content" in msg_obj:
-                    content = msg_obj.get("reasoning_content")
-                elif not content and "thinking" in msg_obj:
-                    content = msg_obj.get("thinking")
-                elif not content and "reasoning" in msg_obj:
-                    content = msg_obj.get("reasoning")
-                    
-                if content and content.strip():
-                    from text_utils import strip_thinking
-                    return strip_thinking(content.strip())
+                content = msg_obj.get("content") or ""
+                reasoning_content = msg_obj.get("reasoning_content") or msg_obj.get("thinking") or msg_obj.get("reasoning") or ""
+                
+                # Fallback per estrarre <think> se presente nel content (es. Ollama)
+                if not reasoning_content and content:
+                    import re
+                    match = re.search(r"<think>(.*?)</think>", content, flags=re.DOTALL | re.IGNORECASE)
+                    if match:
+                        reasoning_content = match.group(1).strip()
+                        content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL | re.IGNORECASE).strip()
+
+                return {"content": content.strip(), "reasoning_content": reasoning_content.strip()}
             else:
                 logger.warning(f"LLM call returned status {res.status_code}: {res.text}")
                 break
@@ -215,7 +218,7 @@ def _call_llm(prompt: str, system_prompt: str = None, max_tokens: int = 600, tem
         except Exception as e:
             logger.warning(f"LLM completion call failed unexpectedly: {e}")
             break
-    return ""
+    return {"content": "", "reasoning_content": ""}
 
 def _call_llm_structured(prompt: str, system_prompt: str, schema_cls: Any, max_tokens: int = 500, temperature: float = 0.0, max_retries: int = 3, reasoning_budget: int = -1) -> Optional[Any]:
     """
@@ -241,13 +244,18 @@ def _call_llm_structured(prompt: str, system_prompt: str, schema_cls: Any, max_t
                 f"Correggi e rispondi di nuovo SOLO con il JSON valido."
             )
 
-        raw = _call_llm(current_prompt, system_prompt=schema_prompt, max_tokens=max_tokens, temperature=temperature, reasoning_budget=reasoning_budget)
-        if not raw:
+        raw_res = _call_llm(current_prompt, system_prompt=schema_prompt, max_tokens=max_tokens, temperature=temperature, reasoning_budget=reasoning_budget)
+        if not raw_res:
             last_error = "Nessuna risposta dal modello LLM"
             continue
 
+        raw = raw_res.get("content", "") if isinstance(raw_res, dict) else ""
+        if not raw:
+            last_error = "Risposta testuale vuota"
+            continue
+
         from text_utils import strip_thinking
-        clean = raw.strip()
+        clean = strip_thinking(raw.strip())
         clean = strip_thinking(clean)
         clean = re.sub(r'^```(?:json)?', '', clean)
         clean = re.sub(r'```$', '', clean).strip()
@@ -406,8 +414,9 @@ def chat_graph_node(state: AgentState) -> AgentState:
 
     ans = loop_res.get("final_response", "")
     trace = loop_res.get("execution_trace", [])
+    reasoning = loop_res.get("reasoning_content")
     plan = {"mode": "chat", "tool_needed": len(trace) > 0, "direct_answer": ans, "execution_log": trace}
-    return {"plan": plan, "execution_trace": trace, "final_response": ans}
+    return {"plan": plan, "execution_trace": trace, "final_response": ans, "reasoning_content": reasoning}
 
 def ask_graph_node(state: AgentState) -> AgentState:
     """Subgraph for memory & knowledge retrieval queries (with Web Search & Code Exec tools enabled)."""
@@ -432,8 +441,9 @@ def ask_graph_node(state: AgentState) -> AgentState:
 
     ans = loop_res.get("final_response", "")
     trace = loop_res.get("execution_trace", [])
+    reasoning = loop_res.get("reasoning_content")
     plan = {"mode": "ask", "tool_needed": len(trace) > 0, "direct_answer": ans, "execution_log": trace}
-    return {"plan": plan, "execution_trace": trace, "final_response": ans}
+    return {"plan": plan, "execution_trace": trace, "final_response": ans, "reasoning_content": reasoning}
 
 
 
@@ -624,7 +634,8 @@ def generate_rollback_plan_with_llm(execution_log: List[ExecutionLog], task: str
     
     Piano di rollback:"""
     
-    plan = _call_llm(prompt, system_prompt="Sei un assistente esperto in rollback di operazioni di infrastruttura Proxmox.", max_tokens=512, temperature=0.3)
+    plan_res = _call_llm(prompt, system_prompt="Sei un assistente esperto in rollback di operazioni di infrastruttura Proxmox.", max_tokens=512, temperature=0.3)
+    plan = plan_res.get("content", "") if isinstance(plan_res, dict) else ""
     return plan.strip() if plan else None
 
 
@@ -787,8 +798,9 @@ def act_graph_node(state: AgentState) -> AgentState:
 
     ans = loop_res.get("final_response", "")
     trace = loop_res.get("execution_trace", [])
+    reasoning = loop_res.get("reasoning_content")
     plan = {"mode": "act", "tool_needed": len(trace) > 0, "direct_answer": ans, "execution_log": trace}
-    return {"plan": plan, "execution_trace": trace, "final_response": ans}
+    return {"plan": plan, "execution_trace": trace, "final_response": ans, "reasoning_content": reasoning}
 
 
 def plan_graph_node(state: AgentState) -> AgentState:
@@ -806,7 +818,8 @@ def plan_graph_node(state: AgentState) -> AgentState:
         "Rispondi SOLAMENTE con la lista numerata dei passaggi di esecuzione."
     )
 
-    llm_plan = _call_llm(task, system_prompt=system_prompt, max_tokens=600, temperature=0.2, reasoning_budget=budget)
+    llm_plan_res = _call_llm(task, system_prompt=system_prompt, max_tokens=600, temperature=0.2, reasoning_budget=budget)
+    llm_plan = llm_plan_res.get("content", "") if isinstance(llm_plan_res, dict) else ""
     plan_steps = []
     if llm_plan:
         for line in llm_plan.split("\n"):
@@ -833,7 +846,8 @@ def plan_graph_node(state: AgentState) -> AgentState:
         "  ]\n"
         "}"
     )
-    json_resp = _call_llm(task, system_prompt=json_prompt, max_tokens=600, temperature=0.1)
+    json_resp_res = _call_llm(task, system_prompt=json_prompt, max_tokens=600, temperature=0.1)
+    json_resp = json_resp_res.get("content", "") if isinstance(json_resp_res, dict) else ""
     plan_structure = None
     if json_resp:
         try:
@@ -918,15 +932,23 @@ def plan_graph_node(state: AgentState) -> AgentState:
     plan = {
         "mode": "plan",
         "tool_needed": False,
+        "direct_answer": "Ho generato un piano di esecuzione. Scegli se eseguirlo o modificarlo.",
         "multi_step": True,
         "plan_steps": plan_steps,
         "plan_structure": plan_structure
     }
+    
+    reasoning = llm_plan_res.get("reasoning_content") if isinstance(llm_plan_res, dict) else None
 
     if state.get("execute"):
         return execute_plan_node(state)
 
-    return {"plan": plan, "plan_structure": plan_structure, "final_response": formatted_plan}
+    return {
+        "plan": plan, 
+        "plan_structure": plan_structure, 
+        "final_response": plan["direct_answer"],
+        "reasoning_content": reasoning
+    }
 
 def _format_tool_result(tool_name: str, result: Any) -> str:
     if isinstance(result, dict) and "error" in result:
@@ -1013,7 +1035,8 @@ def extract_salient_facts(task: str, response: str, memory_context: str) -> List
     
     Fatti salienti (elenca massimo 5 punti concisi, uno per riga):"""
 
-    raw = _call_llm(prompt, system_prompt="Sei un assistente esperto in estrazione di fatti salienti ed entità.", max_tokens=300, temperature=0.3)
+    raw_res = _call_llm(prompt, system_prompt="Sei un assistente esperto in estrazione di fatti salienti ed entità.", max_tokens=300, temperature=0.3)
+    raw = raw_res.get("content", "") if isinstance(raw_res, dict) else ""
     if not raw:
         return []
     

@@ -64,6 +64,7 @@ def run_agent_flow(task: str, thread_id: Optional[str], force_mode: Optional[str
         plan_structure = final_state.get("plan_structure") or (plan_dict.get("plan_structure") if isinstance(plan_dict, dict) else None)
         execution_trace = final_state.get("execution_trace") or (plan_dict.get("execution_log") if isinstance(plan_dict, dict) else None)
         rollback_trace = final_state.get("rollback_trace")
+        reasoning_content = final_state.get("reasoning_content")
             
         resp = ChatResponse(
             thread_id=effective_thread_id,
@@ -73,7 +74,8 @@ def run_agent_flow(task: str, thread_id: Optional[str], force_mode: Optional[str
             plan_steps=plan_steps,
             plan_structure=plan_structure,
             execution_trace=execution_trace,
-            rollback_trace=rollback_trace
+            rollback_trace=rollback_trace,
+            reasoning_content=reasoning_content
         )
 
         # Salva atomico del turno nello store SQLite
