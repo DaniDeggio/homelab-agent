@@ -102,7 +102,9 @@ def run_agent_loop(
                 syn_ans = syn_res.get("content", "") if syn_res else ""
                 reasoning_content = syn_res.get("reasoning_content", "") if syn_res else ""
                 final_ans = syn_ans.strip() if (syn_ans and syn_ans.strip()) else (
-                    selection.reasoning if (selection and selection.reasoning) else "Operazione completata con successo."
+                    selection.reasoning if (selection and selection.reasoning) else (
+                        "Il modello ha effettuato il ragionamento ma non ha generato una risposta finale." if reasoning_content else "Operazione completata con successo."
+                    )
                 )
             # 3. Se la richiesta non richiede tool (es. domande concettuali), generiamo una risposta diretta
             elif call_llm_fn:
@@ -115,7 +117,9 @@ def run_agent_loop(
                 syn_ans = syn_res.get("content", "") if syn_res else ""
                 reasoning_content = syn_res.get("reasoning_content", "") if syn_res else ""
                 final_ans = syn_ans.strip() if (syn_ans and syn_ans.strip()) else (
-                    selection.reasoning if (selection and selection.reasoning) else "Richiesta completata."
+                    selection.reasoning if (selection and selection.reasoning) else (
+                        "Il modello ha effettuato il ragionamento ma non ha generato una risposta finale." if reasoning_content else "Richiesta completata."
+                    )
                 )
             else:
                 final_ans = selection.reasoning if (selection and selection.reasoning) else "Richiesta completata."
@@ -180,6 +184,6 @@ def run_agent_loop(
     
     if not syn_ans or not syn_ans.strip():
         # Fallback sicuro: se l'LLM di sintesi fallisce, non restituire mai None!
-        syn_ans = "Informazioni recuperate con successo dai tool di ricerca. Consulta i dettagli nei log di esecuzione."
+        syn_ans = "Il modello ha effettuato il ragionamento ma non ha generato una risposta testuale." if reasoning_content else "Informazioni recuperate con successo dai tool di ricerca. Consulta i dettagli nei log di esecuzione."
 
     return {"final_response": syn_ans.strip(), "execution_trace": execution_trace, "reasoning_content": reasoning_content}

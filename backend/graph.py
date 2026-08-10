@@ -166,7 +166,7 @@ Riassunto:"""
     summary = summary_res.get("content", "") if isinstance(summary_res, dict) else ""
     return summary.strip() if summary else ""
 
-def _call_llm(prompt: str, system_prompt: str = None, max_tokens: int = 600, temperature: float = 0.3, reasoning_budget: int = -1) -> dict:
+def _call_llm(prompt: str, system_prompt: str = None, max_tokens: int = 4096, temperature: float = 0.3, reasoning_budget: int = -1) -> dict:
     url = f"{config.LLAMA_CPP_URL.rstrip('/')}/chat/completions"
     messages = []
     enable_thinking = reasoning_budget != 0
@@ -220,7 +220,7 @@ def _call_llm(prompt: str, system_prompt: str = None, max_tokens: int = 600, tem
             break
     return {"content": "", "reasoning_content": ""}
 
-def _call_llm_structured(prompt: str, system_prompt: str, schema_cls: Any, max_tokens: int = 500, temperature: float = 0.0, max_retries: int = 3, reasoning_budget: int = -1) -> Optional[Any]:
+def _call_llm_structured(prompt: str, system_prompt: str, schema_cls: Any, max_tokens: int = 4096, temperature: float = 0.0, max_retries: int = 3, reasoning_budget: int = -1) -> Optional[Any]:
     """
     Chiama l'LLM richiedendo output conforme allo schema Pydantic.
     Effettua parsing + validazione con retry mirato ed iniezione dell'errore.
@@ -408,8 +408,8 @@ def chat_graph_node(state: AgentState) -> AgentState:
         task=task,
         mode="chat",
         memory_context=memory_context,
-        call_llm_fn=lambda p, system_prompt=None, reasoning_budget=budget: _call_llm(p, system_prompt=system_prompt, reasoning_budget=reasoning_budget),
-        call_llm_structured_fn=lambda prompt, system_prompt, schema_cls, max_tokens=500, temperature=0.0, max_retries=2, reasoning_budget=budget: _call_llm_structured(prompt, system_prompt, schema_cls, max_tokens, temperature, max_retries, reasoning_budget=reasoning_budget)
+        call_llm_fn=lambda p, system_prompt=None, reasoning_budget=budget: _call_llm(p, system_prompt=system_prompt, max_tokens=4096, reasoning_budget=reasoning_budget),
+        call_llm_structured_fn=lambda prompt, system_prompt, schema_cls, max_tokens=4096, temperature=0.0, max_retries=2, reasoning_budget=budget: _call_llm_structured(prompt, system_prompt, schema_cls, max_tokens, temperature, max_retries, reasoning_budget=reasoning_budget)
     )
 
     ans = loop_res.get("final_response", "")
@@ -435,8 +435,8 @@ def ask_graph_node(state: AgentState) -> AgentState:
         task=task,
         mode="ask",
         memory_context=memory_context,
-        call_llm_fn=lambda p, system_prompt=None, reasoning_budget=budget: _call_llm(p, system_prompt=system_prompt, reasoning_budget=reasoning_budget),
-        call_llm_structured_fn=lambda prompt, system_prompt, schema_cls, max_tokens=500, temperature=0.0, max_retries=2, reasoning_budget=budget: _call_llm_structured(prompt, system_prompt, schema_cls, max_tokens, temperature, max_retries, reasoning_budget=reasoning_budget)
+        call_llm_fn=lambda p, system_prompt=None, reasoning_budget=budget: _call_llm(p, system_prompt=system_prompt, max_tokens=4096, reasoning_budget=reasoning_budget),
+        call_llm_structured_fn=lambda prompt, system_prompt, schema_cls, max_tokens=4096, temperature=0.0, max_retries=2, reasoning_budget=budget: _call_llm_structured(prompt, system_prompt, schema_cls, max_tokens, temperature, max_retries, reasoning_budget=reasoning_budget)
     )
 
     ans = loop_res.get("final_response", "")
@@ -792,8 +792,8 @@ def act_graph_node(state: AgentState) -> AgentState:
         task=task,
         mode="act",
         memory_context=memory_context,
-        call_llm_fn=lambda p, system_prompt=None, reasoning_budget=budget: _call_llm(p, system_prompt=system_prompt, reasoning_budget=reasoning_budget),
-        call_llm_structured_fn=lambda prompt, system_prompt, schema_cls, max_tokens=500, temperature=0.0, max_retries=2, reasoning_budget=budget: _call_llm_structured(prompt, system_prompt, schema_cls, max_tokens, temperature, max_retries, reasoning_budget=reasoning_budget)
+        call_llm_fn=lambda p, system_prompt=None, reasoning_budget=budget: _call_llm(p, system_prompt=system_prompt, max_tokens=4096, reasoning_budget=reasoning_budget),
+        call_llm_structured_fn=lambda prompt, system_prompt, schema_cls, max_tokens=4096, temperature=0.0, max_retries=2, reasoning_budget=budget: _call_llm_structured(prompt, system_prompt, schema_cls, max_tokens, temperature, max_retries, reasoning_budget=reasoning_budget)
     )
 
     ans = loop_res.get("final_response", "")
