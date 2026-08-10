@@ -18,6 +18,7 @@ import config
 from tool_catalog import get_tool_catalog, format_catalog_for_prompt, get_rollback_info
 from tool_schemas import ToolSelection, validate_tool_args
 from agent_loop import run_agent_loop
+from mode_policy import get_mode_policy
 
 
 logging.basicConfig(level=logging.INFO)
