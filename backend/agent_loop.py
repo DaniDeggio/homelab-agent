@@ -94,7 +94,8 @@ def run_agent_loop(
                     f"Task utente: '{task}'\n\n"
                     f"Storico azioni e risultati dei tool eseguiti:\n{obs_text}\n\n"
                     f"Fornisci una risposta finale completa, chiara e ben formattata in italiano per l'utente. "
-                    f"Se sono stati elencati risultati di ricerca o risorse, mostra una sintesi chiare ed esaustiva."
+                    f"Se sono stati elencati risultati di ricerca o risorse, mostra una sintesi chiara ed esaustiva.\n"
+                    f"ATTENZIONE: NON stampare il tuo processo di ragionamento (es. 'Here is a thinking process...', 'Analyze the User's Request', ecc.). Fornisci SOLO e DIRETTAMENTE la risposta finale destinata all'utente, RIGOROSAMENTE IN LINGUA ITALIANA."
                 )
                 syn_ans = call_llm_fn(summary_prompt, reasoning_budget=policy.reasoning_budget)
                 final_ans = syn_ans.strip() if (syn_ans and syn_ans.strip()) else (
@@ -105,7 +106,8 @@ def run_agent_loop(
                 direct_prompt = (
                     f"Rispondi in modo completo, chiaro ed esaustivo alla seguente domanda dell'utente in italiano.\n"
                     f"Domanda: '{task}'\n"
-                    f"Contesto memoria:\n{memory_context or ''}"
+                    f"Contesto memoria:\n{memory_context or ''}\n\n"
+                    f"ATTENZIONE: NON stampare il tuo processo di ragionamento (es. 'Here is a thinking process...', 'Analyze the User's Request', ecc.). Fornisci SOLO e DIRETTAMENTE la risposta finale destinata all'utente, RIGOROSAMENTE IN LINGUA ITALIANA."
                 )
                 syn_ans = call_llm_fn(direct_prompt, reasoning_budget=policy.reasoning_budget)
                 final_ans = syn_ans.strip() if (syn_ans and syn_ans.strip()) else (
@@ -165,7 +167,8 @@ def run_agent_loop(
     summary_prompt = (
         f"Task utente: '{task}'\n\n"
         f"Sulla base delle seguenti azioni e ricerche eseguite:\n{obs_text}\n\n"
-        f"Fornisci la risposta finale completa e ben formattata in italiano per l'utente."
+        f"Fornisci la risposta finale completa e ben formattata in italiano per l'utente.\n"
+        f"ATTENZIONE: NON stampare il tuo processo di ragionamento (es. 'Here is a thinking process...', 'Analyze the User's Request', ecc.). Fornisci SOLO e DIRETTAMENTE la risposta finale destinata all'utente, RIGOROSAMENTE IN LINGUA ITALIANA."
     )
     syn_ans = call_llm_fn(summary_prompt, reasoning_budget=policy.reasoning_budget) if call_llm_fn else None
     if not syn_ans or not syn_ans.strip():
