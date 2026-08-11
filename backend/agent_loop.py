@@ -47,15 +47,17 @@ def run_agent_loop(
 
     catalog_str = format_catalog_for_prompt(available_tools)
     history_observations = []
-    system_prompt = None
 
     for step_id in range(1, policy.max_tool_calls + 1):
         obs_context = "\n".join(history_observations) if history_observations else "Nessuna azione eseguita finora."
         
         now_str = datetime.now().strftime('%A %d %B %Y, %H:%M:%S')
-        system_prompt = (
+        base_system_prompt = (
             f"Data e Ora Corrente del Sistema: {now_str}\n"
             f"Sei l'Agente AI dell'Homelab Proxmox (modalità: {mode.upper()}).\n"
+        )
+
+        tool_system_prompt = base_system_prompt + (
             f"Catalogo tool disponibili per questa modalità:\n{catalog_str}\n\n"
             f"Contesto memoria conversazionale:\n{memory_context or ''}\n\n"
             f"Storico azioni eseguite in questo turno:\n{obs_context}\n\n"
@@ -78,7 +80,7 @@ def run_agent_loop(
 
         selection = call_llm_structured_fn(
             prompt=task,
-            system_prompt=system_prompt,
+            system_prompt=tool_system_prompt,
             schema_cls=ToolSelection,
             max_tokens=600,
             temperature=0.0,
@@ -92,6 +94,11 @@ def run_agent_loop(
                 final_ans = selection.final_answer.strip()
             # 2. Se abbiamo eseguito dei tool ed abbiamo delle osservazioni, sintetizziamo la risposta per l'utente
             elif history_observations and call_llm_fn:
+                summary_system_prompt = base_system_prompt + (
+                    "Sei in fase di risposta finale all'utente dopo aver eseguito dei tool.\n"
+                    "Il tuo compito è sintetizzare le informazioni ottenute dai tool o dalle azioni eseguite in una risposta fluida, completa ed esaustiva in italiano.\n"
+                    "NON generare codice JSON, NON richiamare alcun tool e NON usare la sintassi dei tool in questo step."
+                )
                 obs_text = "\n".join(history_observations)
                 if len(obs_text) > config.TRUNCATION_LIMIT:
                     obs_text = obs_text[:config.TRUNCATION_LIMIT] + "\n... [osservazioni troncate per brevità]"
@@ -103,7 +110,7 @@ def run_agent_loop(
                     f"Spiega i dettagli rilevanti in modo naturale. "
                     f"Se sono stati usati tool di ricerca (es. web_search), cita o spiega le informazioni trovate in modo chiaro e completo."
                 )
-                syn_res = call_llm_fn(summary_prompt, system_prompt=system_prompt, reasoning_budget=policy.reasoning_budget) if call_llm_fn else None
+                syn_res = call_llm_fn(summary_prompt, system_prompt=summary_system_prompt, reasoning_budget=policy.reasoning_budget) if call_llm_fn else None
                 syn_ans = syn_res.get("content", "") if syn_res else ""
                 reasoning_content = syn_res.get("reasoning_content", "") if syn_res else ""
                 final_ans = syn_ans.strip() if (syn_ans and syn_ans.strip()) else (
@@ -113,12 +120,17 @@ def run_agent_loop(
                 )
             # 3. Se la richiesta non richiede tool (es. domande concettuali), generiamo una risposta diretta
             elif call_llm_fn:
+                direct_system_prompt = base_system_prompt + (
+                    "Sei in fase di dialogo diretto con l'utente.\n"
+                    "Rispondi in modo naturale, esaustivo e chiaro alla richiesta in italiano.\n"
+                    "NON generare codice JSON e NON cercare di utilizzare o richiamare alcun tool."
+                )
                 direct_prompt = (
                     f"Rispondi in modo completo, chiaro ed esaustivo alla seguente domanda dell'utente in italiano.\n"
                     f"Domanda: '{task}'\n"
                     f"Contesto memoria:\n{memory_context or ''}"
                 )
-                syn_res = call_llm_fn(direct_prompt, system_prompt=system_prompt, reasoning_budget=policy.reasoning_budget)
+                syn_res = call_llm_fn(direct_prompt, system_prompt=direct_system_prompt, reasoning_budget=policy.reasoning_budget)
                 syn_ans = syn_res.get("content", "") if syn_res else ""
                 reasoning_content = syn_res.get("reasoning_content", "") if syn_res else ""
                 final_ans = syn_ans.strip() if (syn_ans and syn_ans.strip()) else (
@@ -178,12 +190,20 @@ def run_agent_loop(
     if len(obs_text) > config.TRUNCATION_LIMIT:
         obs_text = obs_text[:config.TRUNCATION_LIMIT] + "\n... [osservazioni troncate per brevità]"
 
+    now_str = datetime.now().strftime('%A %d %B %Y, %H:%M:%S')
+    summary_system_prompt = (
+        f"Data e Ora Corrente del Sistema: {now_str}\n"
+        f"Sei l'Agente AI dell'Homelab Proxmox (modalità: {mode.upper()}).\n"
+        "Sei in fase di risposta finale all'utente dopo aver eseguito dei tool.\n"
+        "Il tuo compito è sintetizzare le informazioni ottenute dai tool o dalle azioni eseguite in una risposta fluida, completa ed esaustiva in italiano.\n"
+        "NON generare codice JSON, NON richiamare alcun tool e NON usare la sintassi dei tool in questo step."
+    )
     summary_prompt = (
         f"Task utente: '{task}'\n\n"
         f"Sulla base delle seguenti azioni e ricerche eseguite:\n{obs_text}\n\n"
         f"Fornisci la risposta finale completa e ben formattata in italiano per l'utente."
     )
-    syn_res = call_llm_fn(summary_prompt, system_prompt=system_prompt, reasoning_budget=policy.reasoning_budget) if call_llm_fn else None
+    syn_res = call_llm_fn(summary_prompt, system_prompt=summary_system_prompt, reasoning_budget=policy.reasoning_budget) if call_llm_fn else None
     syn_ans = syn_res.get("content", "") if syn_res else ""
     reasoning_content = syn_res.get("reasoning_content", "") if syn_res else ""
     
