@@ -47,6 +47,7 @@ def run_agent_loop(
 
     catalog_str = format_catalog_for_prompt(available_tools)
     history_observations = []
+    system_prompt = None
 
     for step_id in range(1, policy.max_tool_calls + 1):
         obs_context = "\n".join(history_observations) if history_observations else "Nessuna azione eseguita finora."
@@ -102,7 +103,7 @@ def run_agent_loop(
                     f"Spiega i dettagli rilevanti in modo naturale. "
                     f"Se sono stati usati tool di ricerca (es. web_search), cita o spiega le informazioni trovate in modo chiaro e completo."
                 )
-                syn_res = call_llm_fn(summary_prompt, reasoning_budget=policy.reasoning_budget)
+                syn_res = call_llm_fn(summary_prompt, system_prompt=system_prompt, reasoning_budget=policy.reasoning_budget) if call_llm_fn else None
                 syn_ans = syn_res.get("content", "") if syn_res else ""
                 reasoning_content = syn_res.get("reasoning_content", "") if syn_res else ""
                 final_ans = syn_ans.strip() if (syn_ans and syn_ans.strip()) else (
@@ -117,7 +118,7 @@ def run_agent_loop(
                     f"Domanda: '{task}'\n"
                     f"Contesto memoria:\n{memory_context or ''}"
                 )
-                syn_res = call_llm_fn(direct_prompt, reasoning_budget=policy.reasoning_budget)
+                syn_res = call_llm_fn(direct_prompt, system_prompt=system_prompt, reasoning_budget=policy.reasoning_budget)
                 syn_ans = syn_res.get("content", "") if syn_res else ""
                 reasoning_content = syn_res.get("reasoning_content", "") if syn_res else ""
                 final_ans = syn_ans.strip() if (syn_ans and syn_ans.strip()) else (
@@ -182,7 +183,7 @@ def run_agent_loop(
         f"Sulla base delle seguenti azioni e ricerche eseguite:\n{obs_text}\n\n"
         f"Fornisci la risposta finale completa e ben formattata in italiano per l'utente."
     )
-    syn_res = call_llm_fn(summary_prompt, reasoning_budget=policy.reasoning_budget) if call_llm_fn else None
+    syn_res = call_llm_fn(summary_prompt, system_prompt=system_prompt, reasoning_budget=policy.reasoning_budget) if call_llm_fn else None
     syn_ans = syn_res.get("content", "") if syn_res else ""
     reasoning_content = syn_res.get("reasoning_content", "") if syn_res else ""
     
