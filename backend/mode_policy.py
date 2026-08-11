@@ -16,7 +16,7 @@ DEFAULT_MODE_POLICIES: Dict[str, ModePolicy] = {
         allowed_registries=["web"],
         allow_react_loop=True,
         timeout_seconds=15,
-        reasoning_budget=512
+        reasoning_budget=0
     ),
     "ask": ModePolicy(
         mode="ask",
@@ -24,7 +24,7 @@ DEFAULT_MODE_POLICIES: Dict[str, ModePolicy] = {
         allowed_registries=["web", "code"],
         allow_react_loop=True,
         timeout_seconds=30,
-        reasoning_budget=1024
+        reasoning_budget=2048
     ),
     "act": ModePolicy(
         mode="act",
@@ -32,7 +32,7 @@ DEFAULT_MODE_POLICIES: Dict[str, ModePolicy] = {
         allowed_registries=["metamcp", "web", "code"],
         allow_react_loop=True,
         timeout_seconds=120,
-        reasoning_budget=2048
+        reasoning_budget=8192
     ),
     "plan": ModePolicy(
         mode="plan",

@@ -55,8 +55,7 @@ Risposta (solo chat, ask, act o plan):"""
         "messages": [{"role": "user", "content": prompt}],
         "max_tokens": 64,
         "temperature": 0.0,
-        "chat_template_kwargs": {"enable_thinking": True},
-        "reasoning_budget_tokens": 128
+        "chat_template_kwargs": {"enable_thinking": False},
     }
 
     try:

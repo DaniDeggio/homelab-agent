@@ -312,10 +312,9 @@ export const Chat: React.FC<ChatProps> = ({
               title="Reasoning Token Budget"
             >
               <option value="default" className="bg-slate-900 text-slate-200">Budget: Default</option>
-              <option value="128" className="bg-slate-900 text-slate-200">Fast (128t)</option>
-              <option value="512" className="bg-slate-900 text-slate-200">Balanced (512t)</option>
-              <option value="2048" className="bg-slate-900 text-slate-200">Deep Think (2048t)</option>
-              <option value="4096" className="bg-slate-900 text-slate-200">Max Think (4096t)</option>
+              <option value="0" className="bg-slate-900 text-slate-200">Disable (0t)</option>
+              <option value="2048" className="bg-slate-900 text-slate-200">Balanced (2048t)</option>
+              <option value="8192" className="bg-slate-900 text-slate-200">Deep Think (8192t)</option>
               <option value="-1" className="bg-slate-900 text-slate-200">Unlimited (-1)</option>
             </select>
           </div>
