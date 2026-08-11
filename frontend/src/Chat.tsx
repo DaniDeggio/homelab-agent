@@ -1,5 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { Send, Bot, User, Wrench, Sparkles, AlertTriangle, Play, Menu, Activity, Brain, Lightbulb, ChevronDown } from 'lucide-react';
+import { Send, Bot, User, Wrench, Sparkles, AlertTriangle, Play, Menu, Activity, Brain } from 'lucide-react';
 import type { FormattedMessage, AgentMode } from './api';
 import { PlanViewer } from './components/PlanViewer';
 import { ExecutionTraceViewer } from './components/ExecutionTraceViewer';
@@ -180,7 +180,7 @@ export const Chat: React.FC<ChatProps> = ({
             </div>
           </div>
         ) : (
-          messages.map((msg) => {
+          messages.map((msg, index) => {
             const isUser = msg.sender === 'user';
             const modeName = msg.mode?.toLowerCase();
 

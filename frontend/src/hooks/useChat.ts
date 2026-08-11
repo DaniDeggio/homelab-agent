@@ -1,6 +1,5 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import {
-  sendMessage as sendMessageApi,
   sendStreamMessage,
   getThreadDetails,
   type FormattedMessage,

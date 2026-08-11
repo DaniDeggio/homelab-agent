@@ -1,6 +1,6 @@
 import React, { useRef, useEffect, useState } from 'react';
 import { Lightbulb, ChevronDown } from 'lucide-react';
-import MarkdownRenderer from './MarkdownRenderer';
+import { MarkdownRenderer } from './MarkdownRenderer';
 
 interface ReasoningBlockProps {
   content: string;
