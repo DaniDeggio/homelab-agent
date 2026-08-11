@@ -1,5 +1,6 @@
 import re
 import json
+import contextvars
 import sqlite3
 import logging
 import os
@@ -15,6 +16,9 @@ from mcp_client import MetaMCPClient
 import letta_client
 import router
 import config
+
+stream_queue = contextvars.ContextVar("stream_queue", default=None)
+
 from tool_catalog import get_tool_catalog, format_catalog_for_prompt, get_rollback_info
 from tool_schemas import ToolSelection, validate_tool_args
 from agent_loop import run_agent_loop
@@ -169,7 +173,12 @@ Riassunto:"""
 def _call_llm(prompt: str, system_prompt: str = None, max_tokens: int = 4096, temperature: float = 0.3, reasoning_budget: int = -1) -> dict:
     url = f"{config.LLAMA_CPP_URL.rstrip('/')}/chat/completions"
     messages = []
-    enable_thinking = reasoning_budget != 0
+    
+    # Capability detection
+    model_name_lower = config.DEFAULT_MODEL.lower()
+    supports_reasoning = any(x in model_name_lower for x in ["qwen", "deepseek", "r1", "o1", "o3", "mistral", "think", "reason"])
+    
+    enable_thinking = (reasoning_budget != 0) and supports_reasoning
     if enable_thinking:
         thinking_instruction = "IMPORTANT: Se devi ragionare, fallo liberamente. Il sistema processerà automaticamente il tuo reasoning_content."
         if system_prompt:
@@ -185,31 +194,61 @@ def _call_llm(prompt: str, system_prompt: str = None, max_tokens: int = 4096, te
         "messages": messages,
         "max_tokens": max_tokens,
         "temperature": temperature,
-        "chat_template_kwargs": {"enable_thinking": enable_thinking}
     }
+    
+    if enable_thinking:
+        payload["chat_template_kwargs"] = {"enable_thinking": True}
     
     if enable_thinking and reasoning_budget > 0:
         payload["reasoning_budget_tokens"] = reasoning_budget
 
-    
+    q = stream_queue.get()
+    if q:
+        payload["stream"] = True
+
     max_retries = 2
     for attempt in range(1, max_retries + 1):
         try:
-            res = requests.post(url, json=payload, timeout=120)
+            res = requests.post(url, json=payload, stream=bool(q), timeout=120)
             if res.status_code == 200:
-                msg_obj = res.json()["choices"][0]["message"]
-                content = msg_obj.get("content") or ""
-                reasoning_content = msg_obj.get("reasoning_content") or msg_obj.get("thinking") or msg_obj.get("reasoning") or ""
-                
-                # Fallback per estrarre <think> se presente nel content (es. Ollama)
-                if not reasoning_content and content:
-                    import re
-                    match = re.search(r"<think>(.*?)</think>", content, flags=re.DOTALL | re.IGNORECASE)
-                    if match:
-                        reasoning_content = match.group(1).strip()
-                        content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL | re.IGNORECASE).strip()
+                if q:
+                    content_acc = ""
+                    reasoning_acc = ""
+                    for line in res.iter_lines():
+                        if line:
+                            line = line.decode("utf-8")
+                            if line.startswith("data: ") and line != "data: [DONE]":
+                                try:
+                                    chunk = json.loads(line[6:])
+                                    delta = chunk["choices"][0]["delta"]
+                                    if "reasoning_content" in delta:
+                                        reasoning_part = delta["reasoning_content"]
+                                        if reasoning_part:
+                                            reasoning_acc += reasoning_part
+                                            q.put({"type": "reasoning", "delta": reasoning_part})
+                                    if "content" in delta:
+                                        content_part = delta["content"]
+                                        if content_part:
+                                            content_acc += content_part
+                                            q.put({"type": "content", "delta": content_part})
+                                except Exception as e:
+                                    logger.warning(f"Error parsing SSE line: {e}")
+                    
+                    return {"content": content_acc.strip(), "reasoning_content": reasoning_acc.strip()}
+                else:
+                    msg_obj = res.json()["choices"][0]["message"]
+                    content = msg_obj.get("content") or ""
+                    reasoning_content = msg_obj.get("reasoning_content") or msg_obj.get("thinking") or msg_obj.get("reasoning") or ""
+                    
+                    # Fallback per estrarre <think> se presente nel content (es. Ollama)
+                    if not reasoning_content and content:
+                        import re
+                        match = re.search(r"<think>(.*?)</think>", content, flags=re.DOTALL | re.IGNORECASE)
+                        if match:
+                            reasoning_content = match.group(1).strip()
+                            content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL | re.IGNORECASE).strip()
 
-                return {"content": content.strip(), "reasoning_content": reasoning_content.strip()}
+                    return {"content": content.strip(), "reasoning_content": reasoning_content.strip()}
             else:
                 logger.warning(f"LLM call returned status {res.status_code}: {res.text}")
                 break

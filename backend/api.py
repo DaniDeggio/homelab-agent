@@ -1,12 +1,17 @@
 import os
 import time
+import json
 import sqlite3
+import queue
+import threading
+import contextvars
 from typing import Optional, List
 from fastapi import FastAPI, HTTPException, Depends, Security
+from fastapi.responses import StreamingResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import APIKeyHeader
 from schemas import ChatRequest, ChatResponse, ThreadSummary
-from graph import build_graph
+from graph import build_graph, stream_queue
 import letta_client
 import thread_store
 import config
@@ -109,6 +114,75 @@ async def plan_endpoint(req: ChatRequest):
 @api.post("/v1/invoke", response_model=ChatResponse, dependencies=[Depends(verify_api_key)])
 async def invoke_endpoint(req: ChatRequest):
     return run_agent_flow(req.input, req.thread_id, force_mode=req.force_mode, execute=req.execute, reasoning_budget=req.reasoning_budget)
+
+def run_agent_flow_stream(task: str, thread_id: Optional[str], force_mode: Optional[str] = None, execute: bool = False, reasoning_budget: Optional[int] = None):
+    effective_thread_id = thread_id or f"thread_{int(time.time() * 1000)}"
+    initial_state = {
+        "task": task,
+        "thread_id": effective_thread_id,
+        "force_mode": force_mode,
+        "reasoning_budget": reasoning_budget,
+        "execute": execute,
+        "agent_id": None,
+        "memory_context": None,
+        "mode": "",
+        "plan": {},
+        "tool_result": None,
+        "final_response": ""
+    }
+    
+    cfg = {"configurable": {"thread_id": effective_thread_id}}
+    q = queue.Queue()
+    stream_queue.set(q)
+    
+    def worker():
+        try:
+            final_state = app_graph.invoke(initial_state, config=cfg)
+            mode = final_state.get("mode", force_mode or "plan")
+            response_text = final_state.get("final_response", "")
+            plan_dict = final_state.get("plan", {})
+            tool_used = plan_dict.get("tool_name") if isinstance(plan_dict, dict) else None
+            plan_steps = plan_dict.get("plan_steps") if isinstance(plan_dict, dict) else None
+            plan_structure = final_state.get("plan_structure") or (plan_dict.get("plan_structure") if isinstance(plan_dict, dict) else None)
+            execution_trace = final_state.get("execution_trace") or (plan_dict.get("execution_log") if isinstance(plan_dict, dict) else None)
+            rollback_trace = final_state.get("rollback_trace")
+            reasoning_content = final_state.get("reasoning_content")
+                
+            resp = ChatResponse(
+                thread_id=effective_thread_id,
+                mode=mode,
+                response=response_text,
+                tool_used=tool_used,
+                plan_steps=plan_steps,
+                plan_structure=plan_structure,
+                execution_trace=execution_trace,
+                rollback_trace=rollback_trace,
+                reasoning_content=reasoning_content
+            )
+            thread_store.save_turn(effective_thread_id, task, resp.model_dump())
+            q.put({"type": "final", "response": resp.model_dump()})
+        except Exception as e:
+            q.put({"type": "error", "error": str(e)})
+        finally:
+            q.put(None)
+            
+    ctx = contextvars.copy_context()
+    t = threading.Thread(target=ctx.run, args=(worker,))
+    t.start()
+    
+    def event_generator():
+        while True:
+            item = q.get()
+            if item is None:
+                break
+            yield f"data: {json.dumps(item, ensure_ascii=False)}\n\n"
+        yield "data: [DONE]\n\n"
+        
+    return StreamingResponse(event_generator(), media_type="text/event-stream")
+
+@api.post("/v1/invoke_stream", dependencies=[Depends(verify_api_key)])
+async def invoke_stream_endpoint(req: ChatRequest):
+    return run_agent_flow_stream(req.input, req.thread_id, force_mode=req.force_mode, execute=req.execute, reasoning_budget=req.reasoning_budget)
 
 @api.get("/v1/threads", response_model=List[ThreadSummary], dependencies=[Depends(verify_api_key)])
 async def list_threads():

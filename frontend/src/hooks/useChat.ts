@@ -1,6 +1,7 @@
 import { useState, useCallback, useRef, useEffect } from 'react';
 import {
   sendMessage as sendMessageApi,
+  sendStreamMessage,
   getThreadDetails,
   type FormattedMessage,
   type AgentMode,
@@ -105,32 +106,80 @@ export function useChat(currentThreadId: string | null, onThreadCreated?: (id: s
 
       setIsLoadingChat(true);
 
+      const assistantMsgId = `ast_${Date.now()}`;
+      const placeholderMsg: FormattedMessage = {
+        id: assistantMsgId,
+        sender: 'assistant',
+        content: '',
+        reasoning_content: '',
+        timestamp,
+      };
+
+      setThreadMessagesMap((prev) => ({
+        ...prev,
+        [targetThreadId]: [...(prev[targetThreadId] || []), placeholderMsg],
+      }));
+
       try {
-        const response = await sendMessageApi({
-          input,
-          thread_id: targetThreadId,
-          force_mode: mode,
-          execute,
-          reasoning_budget: reasoningBudget,
-        });
+        await sendStreamMessage(
+          {
+            input,
+            thread_id: targetThreadId,
+            force_mode: mode,
+            execute,
+            reasoning_budget: reasoningBudget,
+          },
+          (reasoningDelta) => {
+            setThreadMessagesMap((prev) => {
+              const msgs = prev[targetThreadId] || [];
+              return {
+                ...prev,
+                [targetThreadId]: msgs.map((m) =>
+                  m.id === assistantMsgId ? { ...m, reasoning_content: (m.reasoning_content || '') + reasoningDelta } : m
+                ),
+              };
+            });
+          },
+          (contentDelta) => {
+            setThreadMessagesMap((prev) => {
+              const msgs = prev[targetThreadId] || [];
+              return {
+                ...prev,
+                [targetThreadId]: msgs.map((m) =>
+                  m.id === assistantMsgId ? { ...m, content: m.content + contentDelta } : m
+                ),
+              };
+            });
+          },
+          (finalResponse) => {
+            const assistantMsg = adaptChatResponseToMessage(finalResponse);
+            assistantMsg.id = assistantMsgId; // preserve id
+            const finalThreadId = finalResponse.thread_id || targetThreadId;
 
-        const assistantMsg = adaptChatResponseToMessage(response);
+            setThreadMessagesMap((prev) => {
+              const msgs = prev[targetThreadId] || [];
+              const updatedMsgs = msgs.map((m) => (m.id === assistantMsgId ? assistantMsg : m));
+              
+              if (finalThreadId !== targetThreadId) {
+                // If thread ID changed (e.g. newly created), move messages
+                const { [targetThreadId]: _, ...rest } = prev;
+                return { ...rest, [finalThreadId]: updatedMsgs };
+              }
+              return { ...prev, [finalThreadId]: updatedMsgs };
+            });
 
-        const finalThreadId = response.thread_id || targetThreadId;
-
-        setThreadMessagesMap((prev) => ({
-          ...prev,
-          [finalThreadId]: [...(prev[targetThreadId] || []), assistantMsg],
-        }));
-
-        // Update Diagnostics
-        setActiveTool(response.tool_used);
-        setActivePlan(response.plan_steps);
-        setActivePlanStructure(response.plan_structure);
-        setActiveExecutionTrace(response.execution_trace);
-        setActiveRollbackTrace(response.rollback_trace);
-        setActiveMode(response.mode);
-
+            // Update Diagnostics
+            setActiveTool(finalResponse.tool_used);
+            setActivePlan(finalResponse.plan_steps);
+            setActivePlanStructure(finalResponse.plan_structure);
+            setActiveExecutionTrace(finalResponse.execution_trace);
+            setActiveRollbackTrace(finalResponse.rollback_trace);
+            setActiveMode(finalResponse.mode);
+          },
+          (errorStr) => {
+            throw new Error(errorStr);
+          }
+        );
       } catch (err: any) {
         console.error('API call failed:', err);
         const errMsg = err.response?.data?.detail || err.message || 'Failed to send message to agent';

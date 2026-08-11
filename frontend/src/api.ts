@@ -112,6 +112,68 @@ export async function sendMessage(req: ChatRequest): Promise<ChatResponse> {
   return res.data;
 }
 
+export async function sendStreamMessage(
+  req: ChatRequest,
+  onReasoningDelta?: (delta: string) => void,
+  onContentDelta?: (delta: string) => void,
+  onFinalResponse?: (response: ChatResponse) => void,
+  onError?: (error: string) => void
+): Promise<void> {
+  try {
+    const response = await fetch(`${API_BASE}/invoke_stream`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        // 'X-API-Key': ... add if you have it in context, else it will be handled by browser if not needed or you can pass it here
+      },
+      body: JSON.stringify(req),
+    });
+
+    if (!response.body) throw new Error('ReadableStream not yet supported in this browser.');
+
+    const reader = response.body.getReader();
+    const decoder = new TextDecoder('utf-8');
+    let buffer = '';
+
+    while (true) {
+      const { done, value } = await reader.read();
+      if (done) break;
+
+      buffer += decoder.decode(value, { stream: true });
+      let boundary = buffer.indexOf('\n\n');
+
+      while (boundary !== -1) {
+        const chunk = buffer.slice(0, boundary);
+        buffer = buffer.slice(boundary + 2);
+        boundary = buffer.indexOf('\n\n');
+
+        if (chunk.startsWith('data: ')) {
+          const dataStr = chunk.slice(6);
+          if (dataStr === '[DONE]') {
+            break;
+          }
+          try {
+            const data = JSON.parse(dataStr);
+            if (data.type === 'reasoning' && onReasoningDelta) {
+              onReasoningDelta(data.delta);
+            } else if (data.type === 'content' && onContentDelta) {
+              onContentDelta(data.delta);
+            } else if (data.type === 'final' && onFinalResponse) {
+              onFinalResponse(data.response);
+            } else if (data.type === 'error' && onError) {
+              onError(data.error);
+            }
+          } catch (e) {
+            console.error('Error parsing SSE JSON', e);
+          }
+        }
+      }
+    }
+  } catch (err: any) {
+    if (onError) onError(err.message || 'Stream error');
+  }
+}
+
 export async function listThreads(): Promise<ThreadItem[]> {
   const res = await api.get<ThreadItem[]>('/threads');
   return res.data;

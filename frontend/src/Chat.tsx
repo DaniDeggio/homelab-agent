@@ -4,6 +4,7 @@ import type { FormattedMessage, AgentMode } from './api';
 import { PlanViewer } from './components/PlanViewer';
 import { ExecutionTraceViewer } from './components/ExecutionTraceViewer';
 import { MarkdownRenderer } from './components/MarkdownRenderer';
+import ReasoningBlock from './components/ReasoningBlock';
 
 interface ChatProps {
   currentThreadId: string | null;
@@ -219,18 +220,7 @@ export const Chat: React.FC<ChatProps> = ({
                     ) : (
                       <>
                         {msg.reasoning_content && (
-                          <details className="mb-3 bg-slate-900/60 border border-slate-700/60 rounded-xl overflow-hidden [&_summary::-webkit-details-marker]:hidden group transition-all duration-200 shadow-sm">
-                            <summary className="px-3.5 py-2.5 cursor-pointer flex items-center justify-between text-xs text-slate-400 font-medium hover:bg-slate-800/80 hover:text-slate-300 transition-colors select-none">
-                              <div className="flex items-center gap-2.5">
-                                <Lightbulb size={14} className="text-amber-500/90" />
-                                <span>Reasoning Process</span>
-                              </div>
-                              <ChevronDown size={14} className="group-open:rotate-180 transition-transform duration-300 ease-in-out opacity-70" />
-                            </summary>
-                            <div className="px-4 py-3 text-slate-300/90 border-t border-slate-700/60 bg-slate-950/40 text-sm leading-relaxed italic whitespace-pre-wrap break-words font-serif max-h-[300px] overflow-y-auto custom-scrollbar">
-                              {msg.reasoning_content}
-                            </div>
-                          </details>
+                          <ReasoningBlock content={msg.reasoning_content} isStreaming={isLoading && index === messages.length - 1} />
                         )}
                         <MarkdownRenderer content={msg.content} />
                       </>
