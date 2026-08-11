@@ -32,11 +32,20 @@ def init_db():
                 execution_trace_json TEXT,
                 rollback_trace_json TEXT,
                 is_error INTEGER DEFAULT 0,
+                reasoning_content TEXT,
                 created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
                 PRIMARY KEY (thread_id, message_id)
             )
         """)
         conn.commit()
+        
+        # Migrazione sicura per tabelle esistenti
+        try:
+            cursor.execute("ALTER TABLE thread_messages ADD COLUMN reasoning_content TEXT")
+            conn.commit()
+        except Exception:
+            pass  # La colonna esiste già
+
         conn.close()
     except Exception as e:
         logger.error(f"Errore inizializzazione thread_store SQLite: {e}")
@@ -58,7 +67,7 @@ def save_turn(thread_id: str, user_input: str, response_data: Dict[str, Any]):
     now_time = time.time()
     time_str = time.strftime("%H:%M", time.localtime(now_time))
     user_msg_id = f"user_{int(now_time * 1000)}"
-    ast_msg_id = f"ast_{int(now_time * 1000) + 1}"
+    ast_msg_id = f"msg_{int(now_time * 1000)}"
 
     try:
         # 1. Salva messaggio User
@@ -68,14 +77,11 @@ def save_turn(thread_id: str, user_input: str, response_data: Dict[str, Any]):
             VALUES (?, ?, ?, ?, ?)
         """, (thread_id, user_msg_id, "user", user_input, time_str))
 
-        # 2. Prepara dati risposta Assistant
-        resp_text = response_data.get("response") or ""
-        if isinstance(resp_text, str):
-            resp_text = re.sub(r'\[Mode:\s*[A-Za-z]+\]\n?', '', resp_text, flags=re.IGNORECASE).strip()
-        else:
-            resp_text = str(resp_text)
+        # 2. Prepara campi Assistant
+        resp_text = response_data.get("response", "")
         mode = response_data.get("mode")
         tool_used = response_data.get("tool_used")
+        reasoning_content = response_data.get("reasoning_content")
         
         plan_steps = response_data.get("plan_steps")
         plan_steps_json = json.dumps(plan_steps, ensure_ascii=False) if plan_steps else None
@@ -103,8 +109,8 @@ def save_turn(thread_id: str, user_input: str, response_data: Dict[str, Any]):
         cursor.execute("""
             INSERT OR REPLACE INTO thread_messages
             (thread_id, message_id, sender, content, timestamp, mode, tool_used, reasoning,
-             plan_steps_json, plan_structure_json, execution_trace_json, rollback_trace_json, is_error)
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+             plan_steps_json, plan_structure_json, execution_trace_json, rollback_trace_json, is_error, reasoning_content)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             thread_id,
             ast_msg_id,
@@ -118,7 +124,8 @@ def save_turn(thread_id: str, user_input: str, response_data: Dict[str, Any]):
             plan_structure_json,
             execution_trace_json,
             rollback_trace_json,
-            is_error
+            is_error,
+            reasoning_content
         ))
 
         conn.commit()
@@ -142,7 +149,7 @@ def get_thread_messages(thread_id: str) -> List[Dict[str, Any]]:
     try:
         cursor.execute("""
             SELECT message_id, sender, content, timestamp, mode, tool_used, reasoning,
-                   plan_steps_json, plan_structure_json, execution_trace_json, rollback_trace_json, is_error
+                   plan_steps_json, plan_structure_json, execution_trace_json, rollback_trace_json, is_error, reasoning_content
             FROM thread_messages
             WHERE thread_id = ?
             ORDER BY rowid ASC
@@ -152,7 +159,7 @@ def get_thread_messages(thread_id: str) -> List[Dict[str, Any]]:
 
         messages = []
         for row in rows:
-            m_id, sender, content, ts, mode, tool_used, reasoning, ps_json, pst_json, et_json, rt_json, is_err = row
+            m_id, sender, content, ts, mode, tool_used, reasoning, ps_json, pst_json, et_json, rt_json, is_err, reasoning_content = row
             
             msg_obj = {
                 "id": m_id,
@@ -166,7 +173,8 @@ def get_thread_messages(thread_id: str) -> List[Dict[str, Any]]:
                 "plan_structure": json.loads(pst_json) if pst_json else None,
                 "execution_trace": json.loads(et_json) if et_json else None,
                 "rollback_trace": json.loads(rt_json) if rt_json else None,
-                "isError": bool(is_err)
+                "isError": bool(is_err),
+                "reasoning_content": reasoning_content
             }
             messages.append(msg_obj)
 
