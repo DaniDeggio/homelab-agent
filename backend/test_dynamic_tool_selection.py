@@ -1,5 +1,6 @@
-import time
 import logging
+import time
+
 from graph import build_graph
 from tool_catalog import get_tool_catalog
 from tool_schemas import validate_tool_args
@@ -79,7 +80,7 @@ def test_dynamic_tool_selection():
     # Invalid call with wrong type or missing required args (if schema defines required)
     val_err = validate_tool_args("proxmox-mcp__get_container_status", {"vmid": "not_an_int"}, tools)
     print(f"Validation result for invalid vmid arg: {val_err}")
-    
+
     print("\n==========================================")
     print("ALL DYNAMIC TOOL SELECTION TESTS PASSED SUCCESSFULLY!")
     print("==========================================")

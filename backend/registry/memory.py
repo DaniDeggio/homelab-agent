@@ -3,15 +3,15 @@
 Espone la ricerca ibrida (BM25 + dense + RRF) sulla memoria archivistica
 di Letta come tool richiamabile dall'agente.
 """
-import sys
-import os
 import logging
-from typing import List, Dict, Any
+import os
+import sys
+from typing import Any, Dict, List
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from registry.base import BaseToolRegistry
 import letta_client
+from registry.base import BaseToolRegistry
 
 logger = logging.getLogger("memory_registry")
 

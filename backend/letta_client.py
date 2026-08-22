@@ -1,7 +1,9 @@
 import logging
-import httpx
 import re
-from typing import Optional, List, Dict, Any, Tuple
+from typing import Any, Dict, List, Optional, Tuple
+
+import httpx
+
 import config
 
 logging.basicConfig(level=logging.INFO)
@@ -162,7 +164,7 @@ def filter_clean_messages(messages: list) -> list:
     for item in messages:
         if not isinstance(item, dict):
             continue
-        
+
         txt = item.get("text") or item.get("content") or item.get("message") or ""
         if not txt:
             continue
@@ -180,7 +182,7 @@ def filter_clean_messages(messages: list) -> list:
             parts = txt.split("Assistant: ", 1)
             user_part = parts[0].replace("User: ", "").strip()
             ast_part = parts[1].strip() if len(parts) > 1 else ""
-            
+
             if user_part:
                 clean_msgs.append({
                     "id": f"{msg_id}_u",
@@ -222,6 +224,7 @@ def delete_thread(agent_id: str) -> bool:
 
 import math
 from collections import defaultdict
+
 
 class BM25Retriever:
     """BM25 sparse retriever for text search over archival documents."""

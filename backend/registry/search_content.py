@@ -1,10 +1,11 @@
-import re
 import copy
 import logging
-import requests
-from typing import List, Dict, Any
-from bs4 import BeautifulSoup
 import os
+import re
+from typing import List
+
+import requests
+from bs4 import BeautifulSoup
 
 logger = logging.getLogger(__name__)
 
@@ -80,7 +81,7 @@ def fetch_webpage_content(url: str, timeout: int = 12) -> dict:
         "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
         "Accept-Language": "en-US,en;q=0.5",
     }
-    
+
     try:
         res = requests.get(url, headers=headers, timeout=timeout, allow_redirects=True)
         if res.status_code >= 400:
@@ -91,7 +92,7 @@ def fetch_webpage_content(url: str, timeout: int = 12) -> dict:
         return _empty_result(url, str(e))
 
     content_type = res.headers.get("Content-Type", "").lower()
-    
+
     # Handle plain text / json
     is_html = "html" in content_type
     is_json = "json" in content_type

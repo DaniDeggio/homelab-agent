@@ -1,9 +1,10 @@
 """Audit log persistente di ogni tool call (Fase 0.4)."""
 import json
-import sqlite3
 import logging
+import sqlite3
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
+
 import config
 
 logger = logging.getLogger("audit_log")

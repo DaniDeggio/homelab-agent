@@ -1,11 +1,10 @@
-import os
 import json
-import time
 import logging
 from pathlib import Path
-from letta_client import BM25Retriever, reciprocal_rank_fusion, search_archival_memory_hybrid
+
 from analyze_monitoring import analyze_monitoring_logs
-from graph import extract_salient_facts, AgentSpan, log_span
+from graph import AgentSpan, extract_salient_facts
+from letta_client import BM25Retriever, reciprocal_rank_fusion
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("test_phase4")

@@ -1,11 +1,11 @@
-import os
-import time
-import json
 import base64
+import json
 import logging
-import requests
 import subprocess
-from typing import Dict, Any
+import time
+from typing import Any, Dict
+
+import requests
 
 import config
 
@@ -82,7 +82,7 @@ class FirecrackerSandbox:
             # 3. Attesa del risultato scansionando l'output console HTTP
             start_time = time.time()
             res_data = None
-            
+
             while time.time() - start_time < timeout:
                 time.sleep(0.3)
                 try:

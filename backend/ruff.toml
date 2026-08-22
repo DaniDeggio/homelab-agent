@@ -1,0 +1,18 @@
+# Configurazione ruff per homelab-agent backend
+line-length = 120
+target-version = "py311"
+
+[lint]
+select = [
+    "E",   # pycodestyle errors
+    "W",   # pycodestyle warnings
+    "F",   # pyflakes
+    "I",   # isort
+    "B",   # bugbear (bug comuni)
+]
+ignore = [
+    "E501",  # line too long (gestito da line-length dove possibile)
+]
+
+[lint.per-file-ignores]
+"test_*.py" = ["B011", "B008"]

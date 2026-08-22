@@ -1,20 +1,21 @@
-import sys
 import os
-from typing import List, Dict, Any
+import sys
+from typing import Any, Dict, List
 
 # Assicura che la directory backend sia nell'import path
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
+import logging
+
+import config
+from mcp_client import MetaMCPClient
 from registry.base import BaseToolRegistry
 from tool_catalog import get_tool_catalog
-from mcp_client import MetaMCPClient
-import config
-import logging
 
 logger = logging.getLogger("metamcp_registry")
 
 try:
-    from mcp_sdk_client import MetaMCPSdkClient, _SDK_AVAILABLE
+    from mcp_sdk_client import _SDK_AVAILABLE, MetaMCPSdkClient
 except ImportError:
     _SDK_AVAILABLE = False
 

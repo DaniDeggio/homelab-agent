@@ -1,12 +1,13 @@
 import json
 import logging
 from datetime import datetime
-from typing import Dict, Any, List, Optional
+from typing import Any, Dict, Optional
+
+import config
 from mode_policy import get_mode_policy
 from registry.manager import get_registry_manager
-from tool_schemas import ToolSelection, validate_tool_args
 from tool_catalog import format_catalog_for_prompt
-import config
+from tool_schemas import ToolSelection, validate_tool_args
 
 logger = logging.getLogger("agent_loop")
 
@@ -48,13 +49,13 @@ def run_agent_loop(
 
     catalog_str = format_catalog_for_prompt(available_tools)
     history_observations = []
-    
+
     # --- Fase 3.4: cache/deduplicazione risultati tool identici nello stesso run ---
     call_cache: Dict[str, Any] = {}
 
     for step_id in range(1, policy.max_tool_calls + 1):
         obs_context = "\n".join(history_observations) if history_observations else "Nessuna azione eseguita finora."
-        
+
         now_str = datetime.now().strftime('%A %d %B %Y, %H:%M:%S')
         base_system_prompt = (
             f"Data e Ora Corrente del Sistema: {now_str}\n"
@@ -234,7 +235,7 @@ def run_agent_loop(
                 f"In attesa di conferma. Non ripetere la chiamata."
             )
             break
-        
+
         is_error = isinstance(tool_res, dict) and "error" in tool_res and tool_res["error"] is not None
         err_msg = tool_res["error"] if (isinstance(tool_res, dict) and "error" in tool_res) else None
         is_sandboxed = tool_res.get("sandboxed") if isinstance(tool_res, dict) else None
@@ -281,7 +282,7 @@ def run_agent_loop(
     syn_res = call_llm_fn(summary_prompt, system_prompt=summary_system_prompt, reasoning_budget=policy.reasoning_budget) if call_llm_fn else None
     syn_ans = syn_res.get("content", "") if syn_res else ""
     reasoning_content = syn_res.get("reasoning_content", "") if syn_res else ""
-    
+
     if not syn_ans or not syn_ans.strip():
         # Fallback sicuro: se l'LLM di sintesi fallisce, non restituire mai None!
         syn_ans = "Il modello ha effettuato il ragionamento ma non ha generato una risposta testuale." if reasoning_content else "Informazioni recuperate con successo dai tool di ricerca. Consulta i dettagli nei log di esecuzione."

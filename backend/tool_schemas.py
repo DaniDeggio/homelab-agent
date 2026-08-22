@@ -1,5 +1,7 @@
+from typing import Any, Dict, List, Optional
+
 from pydantic import BaseModel, Field
-from typing import Optional, Dict, Any, List
+
 try:
     import jsonschema
 except ImportError:
@@ -28,7 +30,7 @@ def validate_tool_args(tool_name: str, arguments: dict, tools_catalog: List[dict
     tool_def = next((t for t in tools_catalog if t["name"] == tool_name), None)
     if not tool_def or not tool_def.get("parameters"):
         return None
-    
+
     schema = tool_def["parameters"]
     if not isinstance(schema, dict) or "properties" not in schema:
         return None

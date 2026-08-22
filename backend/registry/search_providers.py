@@ -1,10 +1,9 @@
-import os
-import re
-import html
 import logging
+import os
+from typing import Dict, List, Optional
+from urllib.parse import parse_qs, quote, urljoin, urlparse
+
 import requests
-from typing import List, Dict, Optional
-from urllib.parse import quote, urlparse, parse_qs, urljoin
 
 logger = logging.getLogger(__name__)
 
@@ -24,25 +23,25 @@ def search_searxng_api(query: str, count: int = 8, time_filter: Optional[str] = 
     url = get_searxng_url()
     if not url:
         return []
-        
+
     params = {
         "q": query,
         "format": "json",
         "engines": "bing,duckduckgo,google,mojeek,presearch",
         "safesearch": "0"
     }
-    
+
     if time_filter:
         time_map = {"day": "day", "week": "week", "month": "month", "year": "year"}
         if time_filter in time_map:
             params["time_range"] = time_map[time_filter]
-            
+
     try:
         res = requests.get(f"{url}/search", params=params, headers={"User-Agent": _USER_AGENT}, timeout=_SEARCH_TIMEOUT)
         if res.status_code != 200:
             logger.warning(f"SearXNG returned {res.status_code}")
             return []
-            
+
         data = res.json()
         results = []
         for item in data.get("results", [])[:count * 2]: # Get more for ranking
@@ -173,6 +172,6 @@ def search_duckduckgo_api(query: str) -> List[Dict[str, str]]:
                     "url": abstract_url or "",
                     "snippet": abstract[:500],
                 })
-    except Exception as e:
+    except Exception:
         pass
     return results

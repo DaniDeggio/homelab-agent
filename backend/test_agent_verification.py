@@ -1,8 +1,7 @@
-import sys
+import logging
 import os
 import re
-import json
-import logging
+import sys
 
 # Ensure backend directory is in python path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -18,10 +17,10 @@ logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("test_verification")
 
 def run_test(title: str, task: str, thread_id: str, force_mode: str = None, execute: bool = False):
-    print(f"\n==========================================")
+    print("\n==========================================")
     print(f"TEST: {title}")
     print(f"Task: '{task}' | Thread: '{thread_id}' | ForceMode: '{force_mode}' | Execute: '{execute}'")
-    print(f"==========================================")
+    print("==========================================")
 
     app = build_graph()
     initial_state = {

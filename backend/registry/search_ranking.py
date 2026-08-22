@@ -1,5 +1,5 @@
-import re
 import logging
+import re
 from datetime import datetime, timezone
 from typing import List, Optional
 from urllib.parse import urlparse
@@ -97,7 +97,7 @@ def rank_search_results(query: str, results: List[dict]) -> List[dict]:
             adjustment += 0.4
         if netloc in _LOW_VALUE_NEWS_DOMAINS:
             adjustment -= 0.8
-        
+
         subject_terms = [t for t in query_terms if t not in _NEWS_HINTS]
         if subject_terms and not any(_has_word(text, t) or _has_word(netloc, t) for t in subject_terms):
             adjustment -= 1.0

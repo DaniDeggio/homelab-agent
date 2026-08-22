@@ -1,15 +1,15 @@
-import unittest
-import sys
 import os
+import sys
+import unittest
 
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
-from mode_policy import get_mode_policy, DEFAULT_MODE_POLICIES
-from registry.manager import get_registry_manager
-from registry.web_search import WebSearchRegistry
+from agent_loop import run_agent_loop
+from mode_policy import get_mode_policy
 from registry.code_exec import CodeExecRegistry
 from registry.firecracker_sandbox import FirecrackerSandbox
-from agent_loop import run_agent_loop
+from registry.manager import get_registry_manager
+
 
 class TestModesAndRegistries(unittest.TestCase):
     def test_mode_policies(self):

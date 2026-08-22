@@ -53,7 +53,10 @@ def _chunk_text(text: str) -> List[str]:
 
     if current.strip():
         chunks.append(current.strip())
-    return [c for c in chunks if len(c) > 30]
+    # Mantieni anche i chunk corti se sono l'unico contenuto del documento
+    if not chunks and text.strip():
+        return [text.strip()]
+    return [c for c in chunks if len(c) > 30] or ([text.strip()] if text.strip() else [])
 
 
 def _extract_pdf(path: Path) -> str:

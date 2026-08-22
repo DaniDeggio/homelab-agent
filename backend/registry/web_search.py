@@ -1,27 +1,27 @@
-import sys
-import os
 import json
 import logging
+import os
+import sys
 import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from typing import List, Dict, Any, Optional
+from typing import Any, Dict, List, Optional
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 from registry.base import BaseToolRegistry
+from registry.search_content import (
+    extract_key_points,
+    fetch_webpage_content,
+    get_tldr,
+)
 
 # Import new modules
 from registry.search_providers import (
-    search_searxng_api,
     search_ddgs_library,
-    search_duckduckgo_html,
     search_duckduckgo_api,
+    search_duckduckgo_html,
+    search_searxng_api,
 )
 from registry.search_ranking import rank_search_results
-from registry.search_content import (
-    fetch_webpage_content,
-    extract_key_points,
-    get_tldr,
-)
 
 logger = logging.getLogger("web_search_registry")
 
@@ -146,7 +146,7 @@ class WebSearchRegistry(BaseToolRegistry):
 
         # Rank results
         ranked_results = rank_search_results(query, search_results)
-        
+
         sources = [{"url": r["url"], "title": r["title"]} for r in ranked_results if r.get("url")]
 
         # Fetch top N pages
@@ -238,7 +238,7 @@ class WebSearchRegistry(BaseToolRegistry):
                     output_parts.append("\nKey Points:")
                     for pt in key_points:
                         output_parts.append(f"- {pt}")
-                
+
                 output_parts.append("")
 
         output_parts.append("=" * 60)

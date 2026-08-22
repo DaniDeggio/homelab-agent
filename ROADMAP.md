@@ -71,11 +71,16 @@
 
 > Layout: il pannello destro ora ha due tab (Diagnostics | Knowledge). Le approvazioni appaiono anche quando l'agente si ferma in attesa (`approval_required` nel trace).
 
-## 8. Piano — Fase 5: Qualità & ops
-1. CI: lint (ruff, mypy) + pytest backend + tsc/vitest frontend.
-2. Test integrazione con MetaMCP mockato; test E2E streaming.
-3. Docker compose per dev locale (backend+frontend+mock MCP).
-4. Documentazione: aggiornare README backend con architettura e sequenze (mermaid).
+## 8. Piano — Fase 5: Qualità & ops ✅ IMPLEMENTATA
+1. ✅ **CI**: GitHub Actions `.github/workflows/backend-ci.yml` — pip cache, ruff lint, pytest suite (guardrails, memory/RAG, API integration) con env isolate.
+2. ✅ **Test integrazione**: `test_api_integration.py` — endpoint REST end-to-end con TestClient, auth 401/200, KB CRUD completo, approval flow via API, agent loop con LLM mockato (direct answer, cache dedup, approval break). `conftest.py` isola le env vars prima di ogni import applicativo.
+3. ✅ **Docker compose dev**: `docker-compose.dev.yml` (backend FastAPI + frontend Vite dev server, volumi, healthcheck) + `backend/Dockerfile`.
+4. ✅ **Documentazione**: README backend aggiornato con diagrammi mermaid (architettura + sequenza richiesta), tabella endpoint, sezione sicurezza e test.
+
+### Risultati
+- **35 test passano** (24 unitari guardrails/memory-RAG + 11 integrazione API)
+- **Ruff**: 213 → 51 problemi dopo auto-fix (161 corretti: whitespace, import sort, unused imports); i restanti 51 sono stile preesistente non bloccante (E702, B904...)
+- **Bug trovati dai test**: chunking che scartava documenti < 30 caratteri; ordine alfabetico dei test unittest che invalidava la suite KB
 
 ## 9. Ordine di esecuzione consigliato
 Fase 0 → 1 → 2 → 3 → 4 → 5. Fasi 0–1 sbloccano sicurezza e manutenibilità; 2–3 sono il valore aggiunto da agente; 4–5 consolidano UX e qualità.

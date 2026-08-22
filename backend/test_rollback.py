@@ -1,7 +1,8 @@
-import time
 import logging
-from unittest.mock import patch, MagicMock
-from graph import build_graph, ExecutionLog, execute_rollback_for_step, generate_rollback_plan_with_llm
+import time
+from unittest.mock import patch
+
+from graph import ExecutionLog, build_graph, execute_rollback_for_step, generate_rollback_plan_with_llm
 from tool_catalog import get_tool_catalog
 
 logging.basicConfig(level=logging.INFO)

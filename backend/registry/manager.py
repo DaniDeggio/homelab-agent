@@ -1,21 +1,20 @@
-import sys
-import os
-import json
-import time
 import logging
-from typing import List, Dict, Any, Optional
+import os
+import sys
+import time
 from concurrent.futures import ThreadPoolExecutor
+from typing import Any, Dict, List, Optional
 
 sys.path.append(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))
 
-from registry.base import BaseToolRegistry
-from registry.metamcp import MetaMCPRegistry
-from registry.web_search import WebSearchRegistry
-from registry.code_exec import CodeExecRegistry
-from registry.memory import MemoryRegistry
+import audit_log
 import guardrails
 from guardrails import _APPROVALS
-import audit_log
+from registry.base import BaseToolRegistry
+from registry.code_exec import CodeExecRegistry
+from registry.memory import MemoryRegistry
+from registry.metamcp import MetaMCPRegistry
+from registry.web_search import WebSearchRegistry
 
 logger = logging.getLogger("registry_manager")
 
@@ -55,7 +54,7 @@ class ToolRegistryManager:
             reg = self._registries.get(reg_name)
             if not reg:
                 continue
-            
+
             reg_tools = reg.get_tools()
             tool_names = [t.get("name") for t in reg_tools if isinstance(t, dict)]
             if tool_name in tool_names:
@@ -103,7 +102,6 @@ class ToolRegistryManager:
 
     def execute_approved_tool(self, request_id: str) -> Dict[str, Any]:
         """Esegue un tool dopo approvazione utente (Fase 3.2)."""
-        import json as _json
         req = _APPROVALS.get(request_id) if hasattr(guardrails, "_APPROVALS") else None
         if req is None:
             return {"error": f"Richiesta di approvazione '{request_id}' non trovata."}

@@ -7,7 +7,6 @@ import json
 import logging
 import sqlite3
 import threading
-from pathlib import Path
 from typing import Any, Dict, List, Optional
 
 import config

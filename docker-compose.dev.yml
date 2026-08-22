@@ -1,0 +1,44 @@
+# Docker Compose per sviluppo locale homelab-agent (Fase 5.3)
+# Backend FastAPI + Frontend Vite dev server. I servizi esterni (llama.cpp,
+# MetaMCP, Letta) restano sulla rete homelab reale: configura gli URL in backend/.env.
+
+services:
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    ports:
+      - "8090:8090"
+    env_file:
+      - ./backend/.env
+    environment:
+      # In dev container l'auth è disabilitata di default (sovrascrivibile)
+      ALLOW_INSECURE: ${ALLOW_INSECURE:-1}
+      CHECKPOINT_DB_PATH: /data/checkpoints.db
+    volumes:
+      - agent_data:/data
+      - ./backend:/app:ro
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8090/v1/health')"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+
+  frontend:
+    image: node:22-alpine
+    working_dir: /app
+    command: sh -c "npm install && npm run dev -- --host 0.0.0.0"
+    ports:
+      - "5173:5173"
+    environment:
+      VITE_API_BASE: http://localhost:8090/v1
+    volumes:
+      - ./frontend:/app
+      - node_modules:/app/node_modules
+    depends_on:
+      - backend
+
+volumes:
+  agent_data:
+  node_modules:

@@ -1,10 +1,10 @@
-import os
-import re
-import time
 import json
-import sqlite3
 import logging
-from typing import Optional, List, Dict, Any
+import re
+import sqlite3
+import time
+from typing import Any, Dict, List, Optional
+
 import config
 
 logger = logging.getLogger("thread_store")
@@ -38,7 +38,7 @@ def init_db():
             )
         """)
         conn.commit()
-        
+
         # Migrazione sicura per tabelle esistenti
         try:
             cursor.execute("ALTER TABLE thread_messages ADD COLUMN reasoning_content TEXT")
@@ -82,7 +82,7 @@ def save_turn(thread_id: str, user_input: str, response_data: Dict[str, Any]):
         mode = response_data.get("mode")
         tool_used = response_data.get("tool_used")
         reasoning_content = response_data.get("reasoning_content")
-        
+
         plan_steps = response_data.get("plan_steps")
         plan_steps_json = json.dumps(plan_steps, ensure_ascii=False) if plan_steps else None
 
@@ -160,7 +160,7 @@ def get_thread_messages(thread_id: str) -> List[Dict[str, Any]]:
         messages = []
         for row in rows:
             m_id, sender, content, ts, mode, tool_used, reasoning, ps_json, pst_json, et_json, rt_json, is_err, reasoning_content = row
-            
+
             msg_obj = {
                 "id": m_id,
                 "sender": sender,

@@ -1,8 +1,8 @@
-import time
-import os
-import json
 import logging
-from graph import build_graph, MEMORY_DIR
+import os
+import time
+
+from graph import MEMORY_DIR, build_graph
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("test_conversation_length")
@@ -68,10 +68,10 @@ def test_long_conversation():
     # 3. Check JSONL file persistence
     filepath = os.path.join(MEMORY_DIR, f"{thread_id}.jsonl")
     assert os.path.exists(filepath), f"JSONL file memory not found at {filepath}"
-    
+
     with open(filepath, "r", encoding="utf-8") as f:
         lines = [line.strip() for line in f if line.strip()]
-    
+
     # 50 user turns + 50 assistant turns = 100 entries
     assert len(lines) == 100, f"Expected 100 entries in JSONL file, got {len(lines)}"
     print(f"\n✅ JSONL File Memory verified: {len(lines)} entries saved at {filepath}")

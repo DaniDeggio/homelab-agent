@@ -1,22 +1,23 @@
-import os
-import time
-import json
 import asyncio
-import sqlite3
-import queue
-import threading
 import contextvars
-from typing import Optional, List
-from fastapi import FastAPI, HTTPException, Depends, Security, Request
-from fastapi.responses import StreamingResponse, JSONResponse
+import json
+import queue
+import sqlite3
+import threading
+import time
+from typing import List, Optional
+
+from fastapi import Depends, FastAPI, HTTPException, Request, Security
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import StreamingResponse
 from fastapi.security import APIKeyHeader
-from schemas import ChatRequest, ChatResponse, ThreadSummary
-from graph import build_graph, stream_queue
+
+import audit_log
+import config
 import letta_client
 import thread_store
-import config
-import audit_log
+from graph import build_graph, stream_queue
+from schemas import ChatRequest, ChatResponse, ThreadSummary
 
 # --- Fase 0.1: fail-fast se l'auth non è configurata ---
 config.get_settings().validate_security()
@@ -76,22 +77,22 @@ def run_agent_flow(task: str, thread_id: Optional[str], force_mode: Optional[str
         "tool_result": None,
         "final_response": ""
     }
-    
+
     cfg = {"configurable": {"thread_id": effective_thread_id}}
     try:
         final_state = app_graph.invoke(initial_state, config=cfg)
-        
+
         mode = final_state.get("mode", force_mode or "plan")
         response_text = final_state.get("final_response", "")
         plan_dict = final_state.get("plan", {})
         tool_used = plan_dict.get("tool_name") if isinstance(plan_dict, dict) else None
-        
+
         plan_steps = plan_dict.get("plan_steps") if isinstance(plan_dict, dict) else None
         plan_structure = final_state.get("plan_structure") or (plan_dict.get("plan_structure") if isinstance(plan_dict, dict) else None)
         execution_trace = final_state.get("execution_trace") or (plan_dict.get("execution_log") if isinstance(plan_dict, dict) else None)
         rollback_trace = final_state.get("rollback_trace")
         reasoning_content = final_state.get("reasoning_content")
-            
+
         resp = ChatResponse(
             thread_id=effective_thread_id,
             mode=mode,
@@ -120,6 +121,7 @@ async def health():
 async def status():
     """Health check aggregato dei servizi esterni (Fase 1.4). Mai bloccante."""
     import httpx
+
     from providers import list_providers
 
     async def _ping(name: str, url: str, headers: dict = None):
@@ -193,11 +195,11 @@ def run_agent_flow_stream(task: str, thread_id: Optional[str], force_mode: Optio
         "tool_result": None,
         "final_response": ""
     }
-    
+
     cfg = {"configurable": {"thread_id": effective_thread_id}}
     q = queue.Queue()
     stream_queue.set(q)
-    
+
     def worker():
         try:
             final_state = app_graph.invoke(initial_state, config=cfg)
@@ -210,7 +212,7 @@ def run_agent_flow_stream(task: str, thread_id: Optional[str], force_mode: Optio
             execution_trace = final_state.get("execution_trace") or (plan_dict.get("execution_log") if isinstance(plan_dict, dict) else None)
             rollback_trace = final_state.get("rollback_trace")
             reasoning_content = final_state.get("reasoning_content")
-                
+
             resp = ChatResponse(
                 thread_id=effective_thread_id,
                 mode=mode,
@@ -228,11 +230,11 @@ def run_agent_flow_stream(task: str, thread_id: Optional[str], force_mode: Optio
             q.put({"type": "error", "error": str(e)})
         finally:
             q.put(None)
-            
+
     ctx = contextvars.copy_context()
     t = threading.Thread(target=ctx.run, args=(worker,))
     t.start()
-    
+
     def event_generator():
         while True:
             item = q.get()
@@ -240,7 +242,7 @@ def run_agent_flow_stream(task: str, thread_id: Optional[str], force_mode: Optio
                 break
             yield f"data: {json.dumps(item, ensure_ascii=False)}\n\n"
         yield "data: [DONE]\n\n"
-        
+
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 @api.post("/v1/invoke_stream", dependencies=[Depends(verify_api_key)])
@@ -316,7 +318,7 @@ async def list_threads():
         cursor.execute("SELECT thread_id, COUNT(*) FROM checkpoints GROUP BY thread_id ORDER BY rowid DESC")
         rows = cursor.fetchall()
         conn.close()
-        
+
         summaries = []
         for tid, count in rows:
             if not tid:
@@ -347,7 +349,7 @@ async def get_thread(thread_id: str):
         cursor.execute("SELECT COUNT(*) FROM checkpoints WHERE thread_id = ?", (thread_id,))
         count = cursor.fetchone()[0]
         conn.close()
-        
+
         # 1. Prova lo store locale (istantaneo)
         stored_messages = thread_store.get_thread_messages(thread_id)
 

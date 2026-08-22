@@ -1,8 +1,8 @@
-import os
 from pathlib import Path
-from typing import List, Optional
+
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
 
 class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=str(Path(__file__).parent / ".env") if (Path(__file__).parent / ".env").exists() else None, env_file_encoding="utf-8", extra="ignore")

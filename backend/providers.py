@@ -5,8 +5,8 @@ Tutti gli adapter restituiscono {"content": str, "reasoning_content": str}
 e supportano streaming verso una callback di eventi.
 """
 import json
-import re
 import logging
+import re
 from abc import ABC, abstractmethod
 from typing import Callable, Dict, List, Optional
 

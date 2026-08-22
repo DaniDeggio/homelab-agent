@@ -1,30 +1,29 @@
-import re
-import json
 import contextvars
-import sqlite3
+import json
 import logging
 import os
-import requests
+import re
+import sqlite3
 import uuid
 from dataclasses import dataclass, field
-from pathlib import Path
 from datetime import datetime
-from typing import TypedDict, Optional, Dict, Any, List
-from langgraph.graph import StateGraph, END
+from pathlib import Path
+from typing import Any, Dict, List, Optional, TypedDict
+
 from langgraph.checkpoint.sqlite import SqliteSaver
-from mcp_client import MetaMCPClient
+from langgraph.graph import END, StateGraph
+
+import config
 import letta_client
 import router
-import config
+from mcp_client import MetaMCPClient
 from providers import get_provider
 
 stream_queue = contextvars.ContextVar("stream_queue", default=None)
 
-from tool_catalog import get_tool_catalog, format_catalog_for_prompt, get_rollback_info
-from tool_schemas import ToolSelection, validate_tool_args
 from agent_loop import run_agent_loop
 from mode_policy import get_mode_policy
-
+from tool_catalog import get_rollback_info, get_tool_catalog
 
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger("graph")
@@ -45,7 +44,7 @@ class AgentSpan:
     completion_tokens: int = 0
     retrieval_hit_rate: float = 1.0
     error: Optional[str] = None
-    
+
     def to_dict(self) -> dict:
         return {
             "session_id": self.session_id,
@@ -173,11 +172,11 @@ Riassunto:"""
 
 def _call_llm(prompt: str, system_prompt: str = None, max_tokens: int = 4096, temperature: float = 0.3, reasoning_budget: int = -1) -> dict:
     messages = []
-    
+
     # Capability detection
     model_name_lower = config.DEFAULT_MODEL.lower()
     supports_reasoning = any(x in model_name_lower for x in ["qwen", "deepseek", "r1", "o1", "o3", "mistral", "think", "reason"])
-    
+
     enable_thinking = (reasoning_budget != 0) and supports_reasoning
     if enable_thinking:
         thinking_instruction = "IMPORTANT: Se devi ragionare, fallo liberamente. Il sistema processerà automaticamente il tuo reasoning_content."
@@ -544,7 +543,7 @@ class ExecutionLog:
         self.timestamp_end = None
         self.rollback_executed = False
         self.rollback_error = None
-    
+
     def to_dict(self) -> dict:
         return {
             "step_id": self.step.get("id"),
@@ -574,23 +573,23 @@ def execute_rollback_for_step(log: ExecutionLog, tools_catalog: list[dict]) -> b
         log.rollback_executed = False
         log.rollback_error = "Tool non reversibile"
         return False
-    
+
     rollback_tool = rollback_info.get("rollback_tool")
     rollback_args_template = rollback_info.get("rollback_args_template", {})
-    
+
     if not rollback_tool:
         logger.error(f"Step {step_id}: rollback_info per `{tool_name}` non specifica rollback_tool")
         log.rollback_executed = False
         log.rollback_error = "Rollback tool non specificato"
         return False
-    
+
     rollback_args = {}
     value_map = {}
     if isinstance(log.args, dict):
         value_map.update(log.args)
     if isinstance(result, dict):
         value_map.update(result)
-        
+
     for arg_key, template_val in rollback_args_template.items():
         if isinstance(template_val, str):
             val_str = template_val
@@ -606,9 +605,9 @@ def execute_rollback_for_step(log: ExecutionLog, tools_catalog: list[dict]) -> b
             rollback_args[arg_key] = val_str
         else:
             rollback_args[arg_key] = template_val
-    
+
     logger.info(f"Rollback step {step_id}: `{rollback_tool}` con args {rollback_args}")
-    
+
     try:
         rollback_result = client.call_tool(rollback_tool, rollback_args)
         if isinstance(rollback_result, dict) and "error" in rollback_result:
@@ -635,7 +634,7 @@ def generate_rollback_plan_with_llm(execution_log: List[ExecutionLog], task: str
         f"- Step {e.step.get('id')}: `{e.tool_name}`({e.args}) → {'OK' if not e.error else 'ERROR: ' + str(e.error)}"
         for e in execution_log
     ])
-    
+
     prompt = f"""
     Un piano di esecuzione è fallito dopo questi step:
     {log_summary}
@@ -649,7 +648,7 @@ def generate_rollback_plan_with_llm(execution_log: List[ExecutionLog], task: str
     - Tool da usare (se noto, altrimenti lascia come "azione manuale")
     
     Piano di rollback:"""
-    
+
     plan_res = _call_llm(prompt, system_prompt="Sei un assistente esperto in rollback di operazioni di infrastruttura Proxmox.", max_tokens=512, temperature=0.3)
     plan = plan_res.get("content", "") if isinstance(plan_res, dict) else ""
     return plan.strip() if plan else None
@@ -659,20 +658,20 @@ def execute_plan_node(state: AgentState) -> AgentState:
     """Executes real MetaMCP tools sequentially based on state['plan_structure'] with robust declarative & WAL rollback."""
     task = state.get("task", "")
     plan_struct = state.get("plan_structure") or state.get("plan", {}).get("plan_structure")
-    
+
     if not plan_struct or not isinstance(plan_struct, dict) or "steps" not in plan_struct:
         return act_graph_node(state)
 
     steps = plan_struct.get("steps", [])
     sorted_steps = topological_sort_steps(steps)
-    
+
     context_vars = {}
     execution_log: List[ExecutionLog] = []
     exec_lines = [
         f"🚀 **Avvio esecuzione reale del piano MetaMCP**: *'{task}'*\n",
         "### Esito Esecuzione Tool Real-Time:\n"
     ]
-    
+
     has_error = False
 
     for step in sorted_steps:
@@ -707,14 +706,14 @@ def execute_plan_node(state: AgentState) -> AgentState:
             log_entry.result = result
             log_entry.timestamp_end = datetime.utcnow()
             logger.info(f"Step {step_id} completato: {result}")
-            
+
             if isinstance(result, dict) and "error" in result:
                 has_error = True
                 err_msg = result["error"]
                 log_entry.error = err_msg
                 exec_lines.append(f"{step_id}. ❌ `{desc}` — Tool `{tool_name}` fallito: `{err_msg}`")
                 break
-            
+
             if output_var:
                 extracted_val = extract_output_var(result, output_var, step_id)
                 if extracted_val is not None:
@@ -734,7 +733,7 @@ def execute_plan_node(state: AgentState) -> AgentState:
     if has_error and execution_log:
         exec_lines.append("\n### 🔄 Rollback parziale degli step eseguiti:\n")
         tools_catalog = get_tool_catalog()
-        
+
         for log_entry in reversed(execution_log):
             if not log_entry.error:  # Rollback solo degli step eseguiti con successo
                 success = execute_rollback_for_step(log_entry, tools_catalog)
@@ -778,12 +777,12 @@ def act_graph_node(state: AgentState) -> AgentState:
     if any(kw in task_lower for kw in ["esegui il piano", "esegui piano", "avvia esecuzione", "esecuzione piano"]):
         plan_summary = task.split(":", 1)[1].strip() if ":" in task else task
         steps = [s.strip() for s in plan_summary.split(";") if s.strip()]
-        
+
         exec_lines = [
             f"🚀 **Avvio esecuzione del piano**: *'{task}'*\n",
             "### Esito Esecuzione Passaggi:\n"
         ]
-        
+
         if steps:
             for idx, step in enumerate(steps, 1):
                 exec_lines.append(f"{idx}. ✅ `{step}` — *Eseguito con successo*")
@@ -795,7 +794,7 @@ def act_graph_node(state: AgentState) -> AgentState:
                 "4. ✅ `Configurazione Host Proxy su Nginx Proxy Manager` — *Completato*",
                 "5. ✅ `Avvio e bootstrap del servizio` — *Completato*"
             ])
-            
+
         exec_lines.append("\n🎉 **Tutti i passaggi del piano sono stati eseguiti con successo!**")
         ans = "\n".join(exec_lines)
         plan = {"mode": "act", "tool_needed": False, "direct_answer": ans}
@@ -955,15 +954,15 @@ def plan_graph_node(state: AgentState) -> AgentState:
         "plan_steps": plan_steps,
         "plan_structure": plan_structure
     }
-    
+
     reasoning = llm_plan_res.get("reasoning_content") if isinstance(llm_plan_res, dict) else None
 
     if state.get("execute"):
         return execute_plan_node(state)
 
     return {
-        "plan": plan, 
-        "plan_structure": plan_structure, 
+        "plan": plan,
+        "plan_structure": plan_structure,
         "final_response": plan["direct_answer"],
         "reasoning_content": reasoning
     }
@@ -1039,7 +1038,7 @@ def extract_salient_facts(task: str, response: str, memory_context: str) -> List
     """
     if not task or not response:
         return []
-    
+
     prompt = f"""
     Estrai fatti salienti dalla seguente conversazione che potrebbero essere utili per il futuro.
     Includi:
@@ -1057,7 +1056,7 @@ def extract_salient_facts(task: str, response: str, memory_context: str) -> List
     raw = raw_res.get("content", "") if isinstance(raw_res, dict) else ""
     if not raw:
         return []
-    
+
     lines = [line.strip("- *").strip() for line in raw.split("\n") if line.strip()]
     return [l for l in lines if len(l) > 5][:5]
 
@@ -1073,7 +1072,7 @@ def respond_node(state: AgentState) -> AgentState:
     if not formatted:
         plan = state.get("plan", {})
         mode = state.get("mode", "chat")
-        
+
         if plan.get("tool_needed"):
             tool_name = plan.get("tool_name")
             result = state.get("tool_result")
@@ -1147,24 +1146,24 @@ def route_to_subgraph(state: AgentState) -> str:
 
 def build_graph():
     workflow = StateGraph(AgentState)
-    
+
     workflow.add_node("intake", intake_node)
     workflow.add_node("retrieve_memory", retrieve_memory_node)
     workflow.add_node("mode_router_node", mode_router_node)
-    
+
     # Subgraph nodes
     workflow.add_node("chat_graph", chat_graph_node)
     workflow.add_node("ask_graph", ask_graph_node)
     workflow.add_node("act_graph", act_graph_node)
     workflow.add_node("plan_graph", plan_graph_node)
-    
+
     workflow.add_node("respond", respond_node)
     workflow.add_node("commit_memory", commit_memory_node)
-    
+
     workflow.set_entry_point("intake")
     workflow.add_edge("intake", "retrieve_memory")
     workflow.add_edge("retrieve_memory", "mode_router_node")
-    
+
     workflow.add_conditional_edges(
         "mode_router_node",
         route_to_subgraph,
@@ -1175,13 +1174,13 @@ def build_graph():
             "plan_graph": "plan_graph"
         }
     )
-    
+
     workflow.add_edge("chat_graph", "respond")
     workflow.add_edge("ask_graph", "respond")
     workflow.add_edge("act_graph", "respond")
     workflow.add_edge("plan_graph", "respond")
-    
+
     workflow.add_edge("respond", "commit_memory")
     workflow.add_edge("commit_memory", END)
-    
+
     return workflow.compile(checkpointer=memory)

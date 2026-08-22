@@ -1,6 +1,8 @@
 import logging
 import re
+
 import requests
+
 import config
 
 logging.basicConfig(level=logging.INFO)
@@ -64,7 +66,7 @@ Risposta (solo chat, ask, act o plan):"""
             msg_obj = res.json()["choices"][0]["message"]
             raw_content = msg_obj.get("content") or ""
             reasoning = msg_obj.get("reasoning_content") or msg_obj.get("thinking") or msg_obj.get("reasoning") or ""
-            
+
             # Use raw_content if it has the answer, otherwise fallback to parsing reasoning just in case
             full_text = f"{reasoning} {raw_content}".strip().lower()
             match = re.search(r'\b(chat|ask|act|plan)\b', full_text)
