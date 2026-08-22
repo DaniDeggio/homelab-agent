@@ -297,7 +297,7 @@ def intake_node(state: AgentState) -> AgentState:
     return state
 
 def retrieve_memory_node(state: AgentState) -> AgentState:
-    """Retrieves relevant memory context combining sliding window + incremental summary."""
+    """Retrieves relevant memory context combining sliding window + incremental summary + semantic recall."""
     thread_id = state.get("thread_id")
     if not thread_id:
         return {"memory_context": None, "agent_id": None}
@@ -310,10 +310,34 @@ def retrieve_memory_node(state: AgentState) -> AgentState:
     if not clean_messages:
         clean_messages = _read_messages_from_file(thread_id)
 
+    # --- Fase 2.1: recall semantico dalla memoria vettoriale (fatti salienti passati) ---
+    semantic_recall = ""
+    try:
+        from vector_store import search_memory
+        task_text = state.get("task", "")
+        hits = search_memory(task_text, k=3, kind="fact")
+        relevant = [h for h in hits if h.get("score", 0) > 0.35 and h.get("thread_id") != thread_id]
+        if relevant:
+            lines = [f"- {h['content']}" for h in relevant]
+            semantic_recall = "### Memoria a lungo termine rilevante:\n" + "\n".join(lines)
+            logger.info(f"Semantic recall: {len(relevant)} fatti rilevanti da altri thread")
+    except Exception as e:
+        logger.warning(f"Semantic recall fallito (non bloccante): {e}")
+
     summary = ""
     recent_messages = []
 
-    if len(clean_messages) > 30:
+    # --- Fase 2.4: compattazione basata su token stimati (non solo numero messaggi) ---
+    def _estimate_tokens(msgs: List[Dict[str, Any]]) -> int:
+        return sum(len(str(m.get("content", ""))) // 4 for m in msgs)  # ~4 char/token
+
+    CONTEXT_TOKEN_BUDGET = 6000  # budget per la memoria conversazionale nel prompt
+    RECENT_KEEP = 20
+
+    total_tokens = _estimate_tokens(clean_messages)
+    needs_compaction = len(clean_messages) > 30 or total_tokens > CONTEXT_TOKEN_BUDGET
+
+    if needs_compaction:
         summary_key = f"summary_1_30_{thread_id}"
         summary_file = os.path.join(MEMORY_DIR, f"summary_{thread_id}.txt")
 
@@ -327,25 +351,33 @@ def retrieve_memory_node(state: AgentState) -> AgentState:
             except Exception:
                 pass
 
+        # Compattazione progressiva: riduci la finestra recente finché non rientra nel budget
+        keep = RECENT_KEEP
+        recent_messages = clean_messages[-keep:]
+        while _estimate_tokens(recent_messages) > CONTEXT_TOKEN_BUDGET and keep > 4:
+            keep = max(4, keep // 2)
+            recent_messages = clean_messages[-keep:]
+
         if not summary:
-            old_messages = clean_messages[:-20]
-            logger.info(f"Generazione summary incrementale per thread '{thread_id}' su {len(old_messages)} vecchi messaggi...")
-            summary = _generate_summary(old_messages)
-            if summary:
-                if agent_id:
-                    letta_client.save_archival_memory(agent_id, key=summary_key, value=summary)
-                try:
-                    os.makedirs(MEMORY_DIR, exist_ok=True)
-                    with open(summary_file, "w", encoding="utf-8") as sf:
-                        sf.write(summary)
-                except Exception as e:
-                    logger.warning(f"Errore salvataggio summary locale {summary_file}: {e}")
-        
-        recent_messages = clean_messages[-20:]
+            old_messages = clean_messages[:-keep] if len(clean_messages) > keep else clean_messages
+            if old_messages:
+                logger.info(f"Generazione summary incrementale per thread '{thread_id}' su {len(old_messages)} vecchi messaggi...")
+                summary = _generate_summary(old_messages)
+                if summary:
+                    if agent_id:
+                        letta_client.save_archival_memory(agent_id, key=summary_key, value=summary)
+                    try:
+                        os.makedirs(MEMORY_DIR, exist_ok=True)
+                        with open(summary_file, "w", encoding="utf-8") as sf:
+                            sf.write(summary)
+                    except Exception as e:
+                        logger.warning(f"Errore salvataggio summary locale {summary_file}: {e}")
     else:
         recent_messages = clean_messages
 
     memory_parts = []
+    if semantic_recall:
+        memory_parts.append(semantic_recall)
     if summary:
         memory_parts.append(f"### Riepilogo conversazione precedente:\n{summary}")
 
@@ -1081,6 +1113,13 @@ def respond_node(state: AgentState) -> AgentState:
             with open(facts_file, "a", encoding="utf-8") as f:
                 for fact in facts:
                     f.write(f"- {fact}\n")
+            # --- Fase 2.1: indicizza i fatti nel vector store per recall semantico cross-thread ---
+            try:
+                from vector_store import add_memory
+                for fact in facts:
+                    add_memory(fact, kind="fact", thread_id=thread_id, metadata={"source": "salient_facts"})
+            except Exception as ve:
+                logger.warning(f"Indicizzazione vector store fallita (non bloccante): {ve}")
     except Exception as e:
         logger.warning(f"Errore durante l'estrazione o il salvataggio dei fatti salienti: {e}")
 

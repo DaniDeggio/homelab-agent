@@ -46,11 +46,13 @@
 4. ✅ **Health checks**: `GET /v1/status` pinga in parallelo llama.cpp, MetaMCP e Letta + health dei provider; ritorna `ok`/`degraded`.
 5. ⏳ **Struttura a pacchetti**: differita per non rompere i deployment esistenti (CT 112); da fare in una release dedicata con aggiornamento systemd.
 
-## 5. Piano — Fase 2: Memory & RAG
-1. Attivare davvero `sqlite-vec`: embedding store per fatti salienti e summary thread; retrieval nel nodo `retrieve_memory`.
-2. Collegare `search_archival_memory_hybrid` (Letta) al grafo come tool/recall automatico.
-3. Knowledge base documenti (pattern odysseus `rag_server`): upload PDF/md, chunking, embedding, ricerca come tool `knowledge_search`.
-4. Compattazione conversazione: riassunto automatico quando la cronologia supera una soglia token.
+## 5. Piano — Fase 2: Memory & RAG ✅ IMPLEMENTATA
+1. ✅ **Vector store attivo**: `vector_store.py` con sqlite-vec (distance_metric=cosine) + embeddings locali fastembed (`paraphrase-multilingual-MiniLM-L12-v2`, 384 dim, ONNX, no torch). Recall semantico cross-thread nel `retrieve_memory_node` (soglia score > 0.35); indicizzazione automatica dei fatti salienti in `respond_node`.
+2. ✅ **Letta hybrid recall**: nuovo registry `memory` con tool `recall_memory` (BM25 + dense + RRF via `search_archival_memory_hybrid`), disponibile in tutte le mode.
+3. ✅ **Knowledge base**: `knowledge_base.py` (chunking con overlap, supporto .md/.txt/.pdf) + tool `knowledge_search` + endpoint REST: `GET/POST /v1/kb/documents`, `DELETE /v1/kb/documents/{filename}`, `GET /v1/kb/search`.
+4. ✅ **Compattazione conversazione**: budget token stimati (~4 char/token) con finestra recente adattiva e summary incrementale.
+
+> Nota: llama.cpp su .159 non ha `--embeddings` attivo (501 su /v1/embeddings): per questo si usa fastembed locale. Se in futuro abiliti `--embeddings` con un modello GGUF di embedding, basta sostituire `_get_embedder()` in vector_store.py.
 
 ## 6. Piano — Fase 3: Tool system evoluto
 1. Tool registry unificato con metadata: categoria, read-only vs write, rischio, registry di origine.

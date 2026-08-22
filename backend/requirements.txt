@@ -73,3 +73,5 @@ zstandard==0.25.0
 slowapi==0.1.9
 pydantic-settings
 mcp>=1.28
+fastembed>=0.7
+pypdf>=6

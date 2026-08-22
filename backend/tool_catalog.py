@@ -111,6 +111,9 @@ def get_tool_catalog(force_refresh: bool = False) -> list[dict]:
     if tools:
         for t in tools:
             t["rollback_info"] = get_rollback_info(t.get("name", ""))
+        # Fase 3.1: metadata di rischio/categoria per ogni tool
+        from guardrails import enrich_catalog_with_metadata
+        tools = enrich_catalog_with_metadata(tools)
         _catalog_cache["data"] = tools
         _catalog_cache["timestamp"] = now
         logger.info(f"Catalogo tool aggiornato: {len(tools)} tool disponibili")

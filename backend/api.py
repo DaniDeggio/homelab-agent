@@ -254,6 +254,60 @@ async def get_audit_log(limit: int = 100, thread_id: Optional[str] = None):
     limit = max(1, min(limit, 500))
     return {"entries": audit_log.get_recent(limit=limit, thread_id=thread_id)}
 
+# --- Knowledge Base (Fase 2.3) ---
+
+@api.get("/v1/kb/documents", dependencies=[Depends(verify_api_key)])
+async def kb_list_documents():
+    """Elenca i documenti indicizzati nella knowledge base."""
+    from knowledge_base import list_documents
+    return {"documents": list_documents()}
+
+@api.post("/v1/kb/documents", dependencies=[Depends(verify_api_key)])
+async def kb_upload_document(request: Request):
+    """Upload e indicizzazione di un documento (.md, .txt, .pdf) nella KB.
+
+    Accetta multipart/form-data con campo 'file' oppure JSON {"filename", "content"}.
+    """
+    import knowledge_base
+    content_type = request.headers.get("content-type", "")
+
+    try:
+        if "multipart/form-data" in content_type:
+            form = await request.form()
+            upload = form.get("file")
+            if upload is None:
+                raise HTTPException(status_code=400, detail="Campo 'file' mancante nel form")
+            filename = upload.filename
+            content_bytes = await upload.read()
+            stats = knowledge_base.ingest_document(filename, content_bytes=content_bytes)
+        else:
+            body = await request.json()
+            filename = body.get("filename")
+            content = body.get("content")
+            if not filename or content is None:
+                raise HTTPException(status_code=400, detail="Servono 'filename' e 'content'")
+            stats = knowledge_base.ingest_document(filename, text_content=content)
+        return {"status": "ingested", **stats}
+    except ValueError as e:
+        raise HTTPException(status_code=400, detail=str(e))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Ingesta fallita: {e}")
+
+@api.delete("/v1/kb/documents/{filename}", dependencies=[Depends(verify_api_key)])
+async def kb_delete_document(filename: str):
+    """Elimina un documento dalla knowledge base."""
+    from knowledge_base import delete_document
+    deleted = delete_document(filename)
+    if deleted == 0:
+        raise HTTPException(status_code=404, detail=f"Documento '{filename}' non trovato in KB")
+    return {"status": "deleted", "filename": filename, "chunks_deleted": deleted}
+
+@api.get("/v1/kb/search", dependencies=[Depends(verify_api_key)])
+async def kb_search(query: str, k: int = 5):
+    """Ricerca semantica nella knowledge base."""
+    from knowledge_base import search_knowledge
+    return {"results": search_knowledge(query, k=max(1, min(k, 20)))}
+
 @api.get("/v1/threads", response_model=List[ThreadSummary], dependencies=[Depends(verify_api_key)])
 async def list_threads():
     try:
@@ -363,4 +417,34 @@ async def delete_all_threads():
         return {"status": "cleared", "deleted_checkpoints": deleted_rows}
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Failed to clear threads: {str(e)}")
+
+# --- Approval workflow (Fase 3.2) ---
+
+@api.get("/v1/approvals", dependencies=[Depends(verify_api_key)])
+async def list_approvals(thread_id: Optional[str] = None):
+    """Elenca le richieste di approvazione tool pendenti."""
+    import guardrails
+    return {"pending": guardrails.get_pending_approvals(thread_id=thread_id)}
+
+@api.post("/v1/approvals/{request_id}/approve", dependencies=[Depends(verify_api_key)])
+async def approve_request(request_id: str):
+    """Approva una richiesta ed esegue immediatamente il tool."""
+    import guardrails
+    from registry.manager import get_registry_manager
+    req = guardrails.resolve_approval(request_id, approved=True)
+    if req is None:
+        raise HTTPException(status_code=404, detail=f"Richiesta '{request_id}' non trovata o già risolta")
+    if req.status == "expired":
+        raise HTTPException(status_code=410, detail="Richiesta scaduta")
+    result = get_registry_manager().execute_approved_tool(request_id)
+    return {"request_id": request_id, "status": "approved", "result": result}
+
+@api.post("/v1/approvals/{request_id}/deny", dependencies=[Depends(verify_api_key)])
+async def deny_request(request_id: str):
+    """Nega una richiesta di approvazione."""
+    import guardrails
+    req = guardrails.resolve_approval(request_id, approved=False)
+    if req is None:
+        raise HTTPException(status_code=404, detail=f"Richiesta '{request_id}' non trovata o già risolta")
+    return {"request_id": request_id, "status": "denied", "tool_name": req.tool_name}
 

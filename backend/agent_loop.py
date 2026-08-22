@@ -48,6 +48,9 @@ def run_agent_loop(
 
     catalog_str = format_catalog_for_prompt(available_tools)
     history_observations = []
+    
+    # --- Fase 3.4: cache/deduplicazione risultati tool identici nello stesso run ---
+    call_cache: Dict[str, Any] = {}
 
     for step_id in range(1, policy.max_tool_calls + 1):
         obs_context = "\n".join(history_observations) if history_observations else "Nessuna azione eseguita finora."
@@ -73,6 +76,8 @@ def run_agent_loop(
             f"NON affidarti alla tua memoria interna. DEVI restituire tool_needed=True e usare il tool 'web_search' per ottenere dati reali e aggiornati.\n"
             f"Se la risposta richiede azioni sul sistema (es. Proxmox, file, container), DEVI restituire tool_needed=True e specificare il tool corretto.\n"
             f"Se la risposta può essere fornita con certezza assoluta usando la tua conoscenza interna, restituisci tool_needed=False.\n"
+            f"CHIAMATE PARALLELE: se ti servono le informazioni di PIÙ tool di sola lettura (es. lista container + stato DNS) e sono indipendenti tra loro, "
+            f"usa 'parallel_calls' con una lista di {{tool_name, arguments}} invece di chiamate sequenziali.\n"
             f"IMPORTANTE: Se devi ragionare, fallo liberamente. Il sistema processerà automaticamente il tuo reasoning_content. FORNISCI LA RISPOSTA FINALE UTILE E COMPLETA PER L'UTENTE in 'final_answer'."
         )
 
@@ -89,10 +94,11 @@ def run_agent_loop(
             reasoning_budget=policy.reasoning_budget
         )
 
-        if not selection or not selection.tool_needed or not selection.tool_name:
+        if not selection or (not selection.tool_needed and not selection.parallel_calls) or not selection.tool_name:
             # 1. Se l'LLM ha fornito un final_answer esplicito
             if selection and selection.final_answer and len(selection.final_answer.strip()) > 10:
                 final_ans = selection.final_answer.strip()
+                reasoning_content = selection.reasoning or None
             # 2. Se abbiamo eseguito dei tool ed abbiamo delle osservazioni, sintetizziamo la risposta per l'utente
             elif history_observations and call_llm_fn:
                 summary_system_prompt = base_system_prompt + (
@@ -145,6 +151,33 @@ def run_agent_loop(
 
             return {"final_response": final_ans, "execution_trace": execution_trace, "reasoning_content": reasoning_content}
 
+        # --- Fase 3.3: chiamate parallele per tool read-only indipendenti ---
+        if selection.parallel_calls and len(selection.parallel_calls) > 1:
+            import guardrails as _gr
+            readonly_calls = [
+                c for c in selection.parallel_calls
+                if isinstance(c, dict) and c.get("tool_name") and _gr.classify_tool(c["tool_name"]) == "safe"
+            ]
+            if len(readonly_calls) > 1:
+                logger.info(f"Step {step_id}: esecuzione parallela di {len(readonly_calls)} tool read-only")
+                results = manager.execute_tools_parallel(
+                    readonly_calls, policy.allowed_registries, thread_id=thread_id, mode=mode
+                )
+                for i, (call, res) in enumerate(zip(readonly_calls, results)):
+                    execution_trace.append({
+                        "step_id": step_id,
+                        "parallel_index": i,
+                        "tool_name": call["tool_name"],
+                        "args": call.get("arguments", {}),
+                        "result": res,
+                        "reasoning": selection.reasoning,
+                        "parallel": True,
+                        "error": res.get("error") if isinstance(res, dict) else None
+                    })
+                    res_str = json.dumps(res, ensure_ascii=False) if isinstance(res, (dict, list)) else str(res)
+                    history_observations.append(f"Step {step_id}.{i} [parallelo]: {call['tool_name']}({call.get('arguments')}) -> {res_str}")
+                continue
+
         tool_name = selection.tool_name
         arguments = selection.arguments or {}
 
@@ -162,8 +195,45 @@ def run_agent_loop(
             history_observations.append(f"Step {step_id}: Chiamata a '{tool_name}' fallita la validazione -> {val_error}")
             continue
 
-        # Esecuzione del tool via Registry Manager (con guardrail + audit log)
+        # Esecuzione del tool via Registry Manager (con guardrail + approval + audit)
+        # --- Fase 3.4: deduplicazione chiamate identiche ---
+        import guardrails as _gr
+        cache_key = f"{tool_name}:{json.dumps(arguments, sort_keys=True, ensure_ascii=False)}"
+        is_readonly = _gr.classify_tool(tool_name) == "safe"
+        if is_readonly and cache_key in call_cache:
+            logger.info(f"Step {step_id}: '{tool_name}' già eseguito con stessi argomenti: riuso risultato cached")
+            tool_res = call_cache[cache_key]
+            execution_trace.append({
+                "step_id": step_id,
+                "tool_name": tool_name,
+                "args": arguments,
+                "result": tool_res,
+                "reasoning": selection.reasoning if selection else None,
+                "cached": True,
+                "error": None
+            })
+            history_observations.append(f"Step {step_id}: {tool_name}({arguments}) -> [risultato in cache da step precedente]")
+            continue
+
         tool_res = manager.execute_tool(tool_name, arguments, policy.allowed_registries, thread_id=thread_id, mode=mode)
+
+        # Se serve approvazione utente: registra la pending e interrompi il loop in attesa
+        if isinstance(tool_res, dict) and tool_res.get("approval_required"):
+            execution_trace.append({
+                "step_id": step_id,
+                "tool_name": tool_name,
+                "args": arguments,
+                "reasoning": selection.reasoning if selection else None,
+                "approval_required": True,
+                "request_id": tool_res.get("request_id"),
+                "message": tool_res.get("message"),
+                "error": None
+            })
+            history_observations.append(
+                f"Step {step_id}: {tool_name} richiede approvazione utente (richiesta {tool_res.get('request_id')}). "
+                f"In attesa di conferma. Non ripetere la chiamata."
+            )
+            break
         
         is_error = isinstance(tool_res, dict) and "error" in tool_res and tool_res["error"] is not None
         err_msg = tool_res["error"] if (isinstance(tool_res, dict) and "error" in tool_res) else None
@@ -179,6 +249,10 @@ def run_agent_loop(
             "error": err_msg
         }
         execution_trace.append(trace_entry)
+
+        # Cache solo per tool read-only (risultati riproducibili)
+        if is_readonly and not is_error:
+            call_cache[cache_key] = tool_res
 
         res_str = json.dumps(tool_res, ensure_ascii=False) if isinstance(tool_res, (dict, list)) else str(tool_res)
         history_observations.append(f"Step {step_id}: {tool_name}({arguments}) -> {res_str}")

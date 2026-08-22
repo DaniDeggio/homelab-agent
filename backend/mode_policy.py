@@ -13,7 +13,7 @@ DEFAULT_MODE_POLICIES: Dict[str, ModePolicy] = {
     "chat": ModePolicy(
         mode="chat",
         max_tool_calls=1,
-        allowed_registries=["web"],
+        allowed_registries=["web", "memory"],
         allow_react_loop=True,
         timeout_seconds=15,
         reasoning_budget=0
@@ -21,7 +21,7 @@ DEFAULT_MODE_POLICIES: Dict[str, ModePolicy] = {
     "ask": ModePolicy(
         mode="ask",
         max_tool_calls=3,
-        allowed_registries=["web", "code"],
+        allowed_registries=["web", "code", "memory"],
         allow_react_loop=True,
         timeout_seconds=30,
         reasoning_budget=2048
@@ -29,7 +29,7 @@ DEFAULT_MODE_POLICIES: Dict[str, ModePolicy] = {
     "act": ModePolicy(
         mode="act",
         max_tool_calls=10,
-        allowed_registries=["metamcp", "web", "code"],
+        allowed_registries=["metamcp", "web", "code", "memory"],
         allow_react_loop=True,
         timeout_seconds=120,
         reasoning_budget=8192
@@ -37,7 +37,7 @@ DEFAULT_MODE_POLICIES: Dict[str, ModePolicy] = {
     "plan": ModePolicy(
         mode="plan",
         max_tool_calls=15,
-        allowed_registries=["metamcp", "web", "code"],
+        allowed_registries=["metamcp", "web", "code", "memory"],
         allow_react_loop=True,
         timeout_seconds=300,
         reasoning_budget=-1
