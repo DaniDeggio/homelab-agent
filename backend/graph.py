@@ -16,6 +16,7 @@ from mcp_client import MetaMCPClient
 import letta_client
 import router
 import config
+from providers import get_provider
 
 stream_queue = contextvars.ContextVar("stream_queue", default=None)
 
@@ -171,7 +172,6 @@ Riassunto:"""
     return summary.strip() if summary else ""
 
 def _call_llm(prompt: str, system_prompt: str = None, max_tokens: int = 4096, temperature: float = 0.3, reasoning_budget: int = -1) -> dict:
-    url = f"{config.LLAMA_CPP_URL.rstrip('/')}/chat/completions"
     messages = []
     
     # Capability detection
@@ -189,75 +189,18 @@ def _call_llm(prompt: str, system_prompt: str = None, max_tokens: int = 4096, te
     if system_prompt:
         messages.append({"role": "system", "content": system_prompt})
     messages.append({"role": "user", "content": prompt})
-    payload = {
-        "model": config.DEFAULT_MODEL,
-        "messages": messages,
-        "max_tokens": max_tokens,
-        "temperature": temperature,
-    }
-    
-    if enable_thinking:
-        payload["chat_template_kwargs"] = {"enable_thinking": True}
-    
-    if enable_thinking and reasoning_budget > 0:
-        payload["reasoning_budget_tokens"] = reasoning_budget
 
     q = stream_queue.get()
-    if q:
-        payload["stream"] = True
+    stream_callback = (lambda ev: q.put(ev)) if q else None
 
-    max_retries = 2
-    for attempt in range(1, max_retries + 1):
-        try:
-            res = requests.post(url, json=payload, stream=bool(q), timeout=120)
-            if res.status_code == 200:
-                if q:
-                    content_acc = ""
-                    reasoning_acc = ""
-                    for line in res.iter_lines():
-                        if line:
-                            line = line.decode("utf-8")
-                            if line.startswith("data: ") and line != "data: [DONE]":
-                                try:
-                                    chunk = json.loads(line[6:])
-                                    delta = chunk["choices"][0]["delta"]
-                                    if "reasoning_content" in delta:
-                                        reasoning_part = delta["reasoning_content"]
-                                        if reasoning_part:
-                                            reasoning_acc += reasoning_part
-                                            q.put({"type": "reasoning", "delta": reasoning_part})
-                                    if "content" in delta:
-                                        content_part = delta["content"]
-                                        if content_part:
-                                            content_acc += content_part
-                                            q.put({"type": "content", "delta": content_part})
-                                except Exception as e:
-                                    logger.warning(f"Error parsing SSE line: {e}")
-                    
-                    return {"content": content_acc.strip(), "reasoning_content": reasoning_acc.strip()}
-                else:
-                    msg_obj = res.json()["choices"][0]["message"]
-                    content = msg_obj.get("content") or ""
-                    reasoning_content = msg_obj.get("reasoning_content") or msg_obj.get("thinking") or msg_obj.get("reasoning") or ""
-                    
-                    # Fallback per estrarre <think> se presente nel content (es. Ollama)
-                    if not reasoning_content and content:
-                        import re
-                        match = re.search(r"<think> (.*?) </think>", content, flags=re.DOTALL | re.IGNORECASE)
-                        if match:
-                            reasoning_content = match.group(1).strip()
-                            content = re.sub(r"<think>.*? </think>", "", content, flags=re.DOTALL | re.IGNORECASE).strip()
-
-                    return {"content": content.strip(), "reasoning_content": reasoning_content.strip()}
-            else:
-                logger.warning(f"LLM call returned status {res.status_code}: {res.text}")
-                break
-        except (requests.exceptions.Timeout, requests.exceptions.ConnectionError) as e:
-            logger.warning(f"LLM call attempt {attempt}/{max_retries} failed: {e}")
-        except Exception as e:
-            logger.warning(f"LLM completion call failed unexpectedly: {e}")
-            break
-    return {"content": "", "reasoning_content": ""}
+    # Fase 1.1: delega al provider abstraction
+    return get_provider().chat(
+        messages,
+        max_tokens=max_tokens,
+        temperature=temperature,
+        reasoning_budget=reasoning_budget,
+        stream_callback=stream_callback,
+    )
 
 def _call_llm_structured(prompt: str, system_prompt: str, schema_cls: Any, max_tokens: int = 4096, temperature: float = 0.0, max_retries: int = 3, reasoning_budget: int = -1) -> Optional[Any]:
     """

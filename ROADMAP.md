@@ -39,12 +39,12 @@
 
 > Nota: il guardrail "confirm" è lato agent — l'LLM deve includere `confirm: true`. Il gate di conferma utente via UI è previsto in Fase 3.2/4.2.
 
-## 4. Piano — Fase 1: Architettura backend
-1. **Provider abstraction**: modulo `providers/` con adapter `llama_cpp`, `openai`, `ollama` (interfaccia comune chat/stream/tool-calling). Sostituire `requests.post` diretto in `_call_llm`.
-2. **Usare SDK MCP ufficiale** (`mcp` python) al posto del client SSE hand-rolled in `mcp_client.py`; supporto transport stdio/SSE/streamable-http.
-3. **Refactor streaming**: sostituire queue+thread con async generator nativo (`StreamingResponse` + `asyncio`); eventi tipizzati `{type: reasoning|content|tool_call|tool_result|final|error}`.
-4. **Health checks provider**: endpoint `/v1/status` che pinga llama.cpp, MetaMCP, Letta; degrado graceful se un servizio è giù.
-5. **Struttura a pacchetti**: separare `api/`, `agent/`, `memory/`, `tools/`, `providers/` (oggi tutto piatto in `backend/`).
+## 4. Piano — Fase 1: Architettura backend (1.1–1.4 ✅, 1.5 differita)
+1. ✅ **Provider abstraction**: `providers.py` con `OpenAICompatProvider` (llama.cpp/vLLM/LM Studio) e `OllamaProvider`; `_call_llm` delega al provider; estrazione `<think>` unificata; supporto `OLLAMA_URL` opzionale in config.
+2. ✅ **SDK MCP ufficiale**: `mcp_sdk_client.py` (ClientSession + sse_client, sessione persistente, retry con reset); `MetaMCPRegistry` usa l'SDK con fallback automatico al client legacy.
+3. ⏳ **Refactor streaming async**: differito — la coda+thread attuale funziona; eventi già tipizzati (`reasoning|content|final|error`). Da migrare ad async generator in Fase 4 insieme al frontend.
+4. ✅ **Health checks**: `GET /v1/status` pinga in parallelo llama.cpp, MetaMCP e Letta + health dei provider; ritorna `ok`/`degraded`.
+5. ⏳ **Struttura a pacchetti**: differita per non rompere i deployment esistenti (CT 112); da fare in una release dedicata con aggiornamento systemd.
 
 ## 5. Piano — Fase 2: Memory & RAG
 1. Attivare davvero `sqlite-vec`: embedding store per fatti salienti e summary thread; retrieval nel nodo `retrieve_memory`.

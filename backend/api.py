@@ -1,6 +1,7 @@
 import os
 import time
 import json
+import asyncio
 import sqlite3
 import queue
 import threading
@@ -114,6 +115,35 @@ def run_agent_flow(task: str, thread_id: Optional[str], force_mode: Optional[str
 @api.get("/v1/health")
 async def health():
     return {"status": "ok"}
+
+@api.get("/v1/status", dependencies=[Depends(verify_api_key)])
+async def status():
+    """Health check aggregato dei servizi esterni (Fase 1.4). Mai bloccante."""
+    import httpx
+    from providers import list_providers
+
+    async def _ping(name: str, url: str, headers: dict = None):
+        try:
+            async with httpx.AsyncClient(timeout=3.0, follow_redirects=True) as client:
+                res = await client.get(url, headers=headers)
+                return {"name": name, "url": url, "ok": res.status_code == 200, "status_code": res.status_code}
+        except Exception as e:
+            return {"name": name, "url": url, "ok": False, "error": str(e)[:120]}
+
+    letta_headers = {"Authorization": f"Bearer {config.LETTA_API_KEY}"} if config.LETTA_API_KEY else {}
+    results = await asyncio.gather(
+        _ping("llamacpp", f"{config.LLAMA_CPP_URL.rstrip('/')}/models"),
+        _ping("metamcp", config.METAMCP_URL_HTTP),
+        _ping("letta", f"{config.LETTA_URL.rstrip('/')}/v1/agents/", headers=letta_headers),
+        return_exceptions=True,
+    )
+    services = [r for r in results if isinstance(r, dict)]
+    providers_status = list_providers()
+    return {
+        "status": "ok" if all(s["ok"] for s in services) else "degraded",
+        "services": services,
+        "providers": providers_status,
+    }
 
 def _limit(rate: str):
     """Decorator di rate limiting condizionale (no-op se slowapi non è installato)."""
