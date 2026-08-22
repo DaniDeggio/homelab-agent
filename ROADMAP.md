@@ -54,11 +54,13 @@
 
 > Nota: llama.cpp su .159 non ha `--embeddings` attivo (501 su /v1/embeddings): per questo si usa fastembed locale. Se in futuro abiliti `--embeddings` con un modello GGUF di embedding, basta sostituire `_get_embedder()` in vector_store.py.
 
-## 6. Piano — Fase 3: Tool system evoluto
-1. Tool registry unificato con metadata: categoria, read-only vs write, rischio, registry di origine.
-2. Permission model per mode già esistente → estendere con **approval workflow**: tool "write/risky" richiedono conferma UI prima dell'esecuzione.
-3. Parallel tool calls dove sicuro (solo read-only).
-4. Cache e deduplicazione risultati tool identici nello stesso run.
+## 6. Piano — Fase 3: Tool system evoluto ✅ IMPLEMENTATA
+1. ✅ **Metadata tool registry**: `get_tool_metadata()` in guardrails.py — rischio (safe/write/risky), categoria (`proxmox.read`, `host.exec.dangerous`, `dns.write`...), read_only, requires_approval, reversible. Catalogo arricchito automaticamente in `tool_catalog.py`.
+2. ✅ **Approval workflow**: i tool rischiosi non bloccano più ma creano una `ApprovalRequest` (TTL 5 min). L'agent loop si interrompe segnalando la pending; endpoint REST: `GET /v1/approvals`, `POST /v1/approvals/{id}/approve` (esegue il tool), `POST /v1/approvals/{id}/deny`. Il vecchio meccanismo `"confirm": true` resta come shortcut.
+3. ✅ **Parallel tool calls**: nuovo campo `parallel_calls` nello schema `ToolSelection`; l'LLM può richiedere più tool read-only indipendenti, eseguiti via ThreadPoolExecutor (`execute_tools_parallel`). Solo tool classificati safe vengono parallelizzati.
+4. ✅ **Cache/deduplicazione**: chiamate identiche a tool read-only nello stesso run riusano il risultato cached (trace marcata `cached: true`).
+
+> Nota frontend: il pannello approvazioni UI è previsto in Fase 4.2; per ora gli approval sono gestibili via API REST.
 
 ## 7. Piano — Fase 4: Frontend
 1. Syntax highlighting codice (rehype-highlight/Shiki) nel MarkdownRenderer.
