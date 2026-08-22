@@ -243,10 +243,10 @@ def _call_llm(prompt: str, system_prompt: str = None, max_tokens: int = 4096, te
                     # Fallback per estrarre <think> se presente nel content (es. Ollama)
                     if not reasoning_content and content:
                         import re
-                        match = re.search(r"<think>(.*?)</think>", content, flags=re.DOTALL | re.IGNORECASE)
+                        match = re.search(r"<think> (.*?) </think>", content, flags=re.DOTALL | re.IGNORECASE)
                         if match:
                             reasoning_content = match.group(1).strip()
-                            content = re.sub(r"<think>.*?</think>", "", content, flags=re.DOTALL | re.IGNORECASE).strip()
+                            content = re.sub(r"<think>.*? </think>", "", content, flags=re.DOTALL | re.IGNORECASE).strip()
 
                     return {"content": content.strip(), "reasoning_content": reasoning_content.strip()}
             else:
@@ -447,6 +447,7 @@ def chat_graph_node(state: AgentState) -> AgentState:
         task=task,
         mode="chat",
         memory_context=memory_context,
+        thread_id=state.get("thread_id"),
         call_llm_fn=lambda p, system_prompt=None, reasoning_budget=budget: _call_llm(p, system_prompt=system_prompt, max_tokens=4096, reasoning_budget=reasoning_budget),
         call_llm_structured_fn=lambda prompt, system_prompt, schema_cls, max_tokens=4096, temperature=0.0, max_retries=2, reasoning_budget=budget: _call_llm_structured(prompt, system_prompt, schema_cls, max_tokens, temperature, max_retries, reasoning_budget=reasoning_budget)
     )
@@ -474,6 +475,7 @@ def ask_graph_node(state: AgentState) -> AgentState:
         task=task,
         mode="ask",
         memory_context=memory_context,
+        thread_id=state.get("thread_id"),
         call_llm_fn=lambda p, system_prompt=None, reasoning_budget=budget: _call_llm(p, system_prompt=system_prompt, max_tokens=4096, reasoning_budget=reasoning_budget),
         call_llm_structured_fn=lambda prompt, system_prompt, schema_cls, max_tokens=4096, temperature=0.0, max_retries=2, reasoning_budget=budget: _call_llm_structured(prompt, system_prompt, schema_cls, max_tokens, temperature, max_retries, reasoning_budget=reasoning_budget)
     )
@@ -784,6 +786,7 @@ def execute_plan_node(state: AgentState) -> AgentState:
 
     ans = "\n".join(exec_lines)
     log_dicts = [log.to_dict() for log in execution_log]
+    plan = {"mode": "act", "tool_needed": True, "direct_answer": ans, "execution_log": log_dicts}
     return {"plan": plan, "plan_structure": plan_struct, "execution_trace": log_dicts, "final_response": ans}
 
 
@@ -831,6 +834,7 @@ def act_graph_node(state: AgentState) -> AgentState:
         task=task,
         mode="act",
         memory_context=memory_context,
+        thread_id=state.get("thread_id"),
         call_llm_fn=lambda p, system_prompt=None, reasoning_budget=budget: _call_llm(p, system_prompt=system_prompt, max_tokens=4096, reasoning_budget=reasoning_budget),
         call_llm_structured_fn=lambda prompt, system_prompt, schema_cls, max_tokens=4096, temperature=0.0, max_retries=2, reasoning_budget=budget: _call_llm_structured(prompt, system_prompt, schema_cls, max_tokens, temperature, max_retries, reasoning_budget=reasoning_budget)
     )

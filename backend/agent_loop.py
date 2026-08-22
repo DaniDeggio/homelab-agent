@@ -15,7 +15,8 @@ def run_agent_loop(
     mode: str,
     memory_context: Optional[str] = None,
     call_llm_fn: Any = None,
-    call_llm_structured_fn: Any = None
+    call_llm_structured_fn: Any = None,
+    thread_id: Optional[str] = None
 ) -> Dict[str, Any]:
     """
     Esegue il loop ReAct autonomo in base alla ModePolicy della modalità corrente.
@@ -161,8 +162,8 @@ def run_agent_loop(
             history_observations.append(f"Step {step_id}: Chiamata a '{tool_name}' fallita la validazione -> {val_error}")
             continue
 
-        # Esecuzione del tool via Registry Manager
-        tool_res = manager.execute_tool(tool_name, arguments, policy.allowed_registries)
+        # Esecuzione del tool via Registry Manager (con guardrail + audit log)
+        tool_res = manager.execute_tool(tool_name, arguments, policy.allowed_registries, thread_id=thread_id, mode=mode)
         
         is_error = isinstance(tool_res, dict) and "error" in tool_res and tool_res["error"] is not None
         err_msg = tool_res["error"] if (isinstance(tool_res, dict) and "error" in tool_res) else None

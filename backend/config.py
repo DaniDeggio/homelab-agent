@@ -1,32 +1,80 @@
 import os
 from pathlib import Path
+from typing import List, Optional
+from pydantic import Field, field_validator
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
-def load_env():
-    env_path = Path(__file__).parent / ".env"
-    if env_path.exists():
-        with open(env_path, "r", encoding="utf-8") as f:
-            for line in f:
-                line = line.strip()
+class Settings(BaseSettings):
+    model_config = SettingsConfigDict(env_file=str(Path(__file__).parent / ".env") if (Path(__file__).parent / ".env").exists() else None, env_file_encoding="utf-8", extra="ignore")
 
-                if line and not line.startswith("#") and "=" in line:
-                    k, v = line.split("=", 1)
-                    os.environ.setdefault(k.strip(), v.strip())
+    # --- Sicurezza (Fase 0) ---
+    api_secret_key: str = Field(default="", alias="API_SECRET_KEY")
+    allow_insecure: bool = Field(default=False, alias="ALLOW_INSECURE")
+    cors_origins: str = Field(
+        default="http://localhost:5173,http://localhost:4173",
+        alias="CORS_ORIGINS",
+    )
+    rate_limit: str = Field(default="30/minute", alias="RATE_LIMIT")
 
-load_env()
+    # --- MetaMCP ---
+    metamcp_url: str = Field(default="http://192.168.1.175:12008/metamcp/MetaMCP/sse", alias="METAMCP_URL")
+    metamcp_url_http: str = Field(default="http://192.168.1.175:12008", alias="METAMCP_URL_HTTP")
+    metamcp_api_key: str = Field(default="", alias="METAMCP_API_KEY")
 
-METAMCP_URL = os.getenv("METAMCP_URL", "http://192.168.1.175:12008/metamcp/MetaMCP/sse")
-METAMCP_URL_HTTP = os.getenv("METAMCP_URL_HTTP", "http://192.168.1.175:12008")
-METAMCP_API_KEY = os.getenv("METAMCP_API_KEY", "")
-DEFAULT_MODEL = os.getenv("DEFAULT_MODEL", "Qwen3.6-35B-HugeCtx")
-LLAMA_CPP_URL = os.getenv("LLAMA_CPP_URL", "http://192.168.1.159:8080/v1")
-LETTA_URL = os.getenv("LETTA_URL", "http://192.168.1.177:8083")
-LETTA_API_KEY = os.getenv("LETTA_API_KEY", "")
-CHECKPOINT_DB_PATH = os.getenv("CHECKPOINT_DB_PATH", str(Path(__file__).parent / "checkpoints.db"))
-TRUNCATION_LIMIT = int(os.getenv("TRUNCATION_LIMIT", "40000"))
+    # --- LLM ---
+    default_model: str = Field(default="Qwen3.6-35B-HugeCtx", alias="DEFAULT_MODEL")
+    llama_cpp_url: str = Field(default="http://192.168.1.159:8080/v1", alias="LLAMA_CPP_URL")
 
-# Firecracker Setup
-FIRECRACKER_API_URL = os.getenv("FIRECRACKER_API_URL", "http://192.168.1.69:8080")
-FIRECRACKER_LOG_URL = os.getenv("FIRECRACKER_LOG_URL", "http://192.168.1.69:8081/console.log")
-FIRECRACKER_KERNEL_PATH = os.getenv("FIRECRACKER_KERNEL_PATH", "/opt/firecracker/vmlinux.bin")
-FIRECRACKER_ROOTFS_PATH = os.getenv("FIRECRACKER_ROOTFS_PATH", "/opt/firecracker/rootfs.ext4")
+    # --- Letta ---
+    letta_url: str = Field(default="http://192.168.1.177:8083", alias="LETTA_URL")
+    letta_api_key: str = Field(default="", alias="LETTA_API_KEY")
+
+    # --- Storage ---
+    checkpoint_db_path: str = Field(default=str(Path(__file__).parent / "checkpoints.db"), alias="CHECKPOINT_DB_PATH")
+    truncation_limit: int = Field(default=40000, alias="TRUNCATION_LIMIT")
+
+    # --- Firecracker ---
+    firecracker_api_url: str = Field(default="http://192.168.1.69:8080", alias="FIRECRACKER_API_URL")
+    firecracker_log_url: str = Field(default="http://192.168.1.69:8081/console.log", alias="FIRECRACKER_LOG_URL")
+    firecracker_kernel_path: str = Field(default="/opt/firecracker/vmlinux.bin", alias="FIRECRACKER_KERNEL_PATH")
+    firecracker_rootfs_path: str = Field(default="/opt/firecracker/rootfs.ext4", alias="FIRECRACKER_ROOTFS_PATH")
+
+    @field_validator("cors_origins", mode="after")
+    @classmethod
+    def _split_origins(cls, v):
+        if isinstance(v, str):
+            return [o.strip() for o in v.split(",") if o.strip()]
+        return v
+
+    def validate_security(self) -> None:
+        """Fail-fast se l'API è esposta senza chiave e senza ALLOW_INSECURE."""
+        if not self.api_secret_key.strip() and not self.allow_insecure:
+            raise RuntimeError(
+                "API_SECRET_KEY non impostata: l'API verrebbe esposta senza autenticazione. "
+                "Imposta API_SECRET_KEY in backend/.env oppure ALLOW_INSECURE=1 per ambienti di sviluppo."
+            )
+
+_settings = Settings()
+
+def get_settings() -> Settings:
+    return _settings
+
+# Compatibilità con il codice esistente che importa config.XXX
+API_SECRET_KEY = _settings.api_secret_key
+ALLOW_INSECURE = _settings.allow_insecure
+CORS_ORIGINS = _settings.cors_origins
+RATE_LIMIT = _settings.rate_limit
+METAMCP_URL = _settings.metamcp_url
+METAMCP_URL_HTTP = _settings.metamcp_url_http
+METAMCP_API_KEY = _settings.metamcp_api_key
+DEFAULT_MODEL = _settings.default_model
+LLAMA_CPP_URL = _settings.llama_cpp_url
+LETTA_URL = _settings.letta_url
+LETTA_API_KEY = _settings.letta_api_key
+CHECKPOINT_DB_PATH = _settings.checkpoint_db_path
+TRUNCATION_LIMIT = _settings.truncation_limit
+FIRECRACKER_API_URL = _settings.firecracker_api_url
+FIRECRACKER_LOG_URL = _settings.firecracker_log_url
+FIRECRACKER_KERNEL_PATH = _settings.firecracker_kernel_path
+FIRECRACKER_ROOTFS_PATH = _settings.firecracker_rootfs_path
 

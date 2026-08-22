@@ -6,8 +6,8 @@ import queue
 import threading
 import contextvars
 from typing import Optional, List
-from fastapi import FastAPI, HTTPException, Depends, Security
-from fastapi.responses import StreamingResponse
+from fastapi import FastAPI, HTTPException, Depends, Security, Request
+from fastapi.responses import StreamingResponse, JSONResponse
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import APIKeyHeader
 from schemas import ChatRequest, ChatResponse, ThreadSummary
@@ -15,6 +15,10 @@ from graph import build_graph, stream_queue
 import letta_client
 import thread_store
 import config
+import audit_log
+
+# --- Fase 0.1: fail-fast se l'auth non è configurata ---
+config.get_settings().validate_security()
 
 app_graph = build_graph()
 
@@ -24,17 +28,33 @@ api = FastAPI(
     version="1.0"
 )
 
+# --- Fase 0.1: CORS ristretto alle origini configurate ---
 api.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=config.CORS_ORIGINS,
+    allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
+# --- Fase 0.2: rate limiting ---
+try:
+    from slowapi import Limiter, _rate_limit_exceeded_handler
+    from slowapi.errors import RateLimitExceeded
+    from slowapi.util import get_remote_address
+
+    limiter = Limiter(key_func=get_remote_address)
+    api.state.limiter = limiter
+    api.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
+    _RATE_LIMIT_ENABLED = True
+except ImportError:
+    limiter = None
+    _RATE_LIMIT_ENABLED = False
+
 api_key_header = APIKeyHeader(name="X-API-Key", auto_error=False)
 
 def verify_api_key(x_api_key: Optional[str] = Security(api_key_header)):
-    expected_key = os.getenv("API_SECRET_KEY", "").strip()
+    expected_key = config.API_SECRET_KEY.strip()
     if expected_key:
         if not x_api_key or x_api_key != expected_key:
             raise HTTPException(status_code=401, detail="Invalid or missing X-API-Key header")
@@ -95,24 +115,37 @@ def run_agent_flow(task: str, thread_id: Optional[str], force_mode: Optional[str
 async def health():
     return {"status": "ok"}
 
+def _limit(rate: str):
+    """Decorator di rate limiting condizionale (no-op se slowapi non è installato)."""
+    if _RATE_LIMIT_ENABLED and limiter:
+        return limiter.limit(config.RATE_LIMIT)
+    def _noop(fn):
+        return fn
+    return _noop
+
 @api.post("/v1/chat", response_model=ChatResponse, dependencies=[Depends(verify_api_key)])
-async def chat_endpoint(req: ChatRequest):
+@_limit(config.RATE_LIMIT)
+async def chat_endpoint(req: ChatRequest, request: Request = None):
     return run_agent_flow(req.input, req.thread_id, force_mode=req.force_mode, execute=req.execute, reasoning_budget=req.reasoning_budget)
 
 @api.post("/v1/ask", response_model=ChatResponse, dependencies=[Depends(verify_api_key)])
-async def ask_endpoint(req: ChatRequest):
+@_limit(config.RATE_LIMIT)
+async def ask_endpoint(req: ChatRequest, request: Request = None):
     return run_agent_flow(req.input, req.thread_id, force_mode="ask", execute=req.execute, reasoning_budget=req.reasoning_budget)
 
 @api.post("/v1/act", response_model=ChatResponse, dependencies=[Depends(verify_api_key)])
-async def act_endpoint(req: ChatRequest):
+@_limit(config.RATE_LIMIT)
+async def act_endpoint(req: ChatRequest, request: Request = None):
     return run_agent_flow(req.input, req.thread_id, force_mode="act", execute=req.execute, reasoning_budget=req.reasoning_budget)
 
 @api.post("/v1/plan", response_model=ChatResponse, dependencies=[Depends(verify_api_key)])
-async def plan_endpoint(req: ChatRequest):
+@_limit(config.RATE_LIMIT)
+async def plan_endpoint(req: ChatRequest, request: Request = None):
     return run_agent_flow(req.input, req.thread_id, force_mode="plan", execute=req.execute, reasoning_budget=req.reasoning_budget)
 
 @api.post("/v1/invoke", response_model=ChatResponse, dependencies=[Depends(verify_api_key)])
-async def invoke_endpoint(req: ChatRequest):
+@_limit(config.RATE_LIMIT)
+async def invoke_endpoint(req: ChatRequest, request: Request = None):
     return run_agent_flow(req.input, req.thread_id, force_mode=req.force_mode, execute=req.execute, reasoning_budget=req.reasoning_budget)
 
 def run_agent_flow_stream(task: str, thread_id: Optional[str], force_mode: Optional[str] = None, execute: bool = False, reasoning_budget: Optional[int] = None):
@@ -181,8 +214,15 @@ def run_agent_flow_stream(task: str, thread_id: Optional[str], force_mode: Optio
     return StreamingResponse(event_generator(), media_type="text/event-stream")
 
 @api.post("/v1/invoke_stream", dependencies=[Depends(verify_api_key)])
-async def invoke_stream_endpoint(req: ChatRequest):
+@_limit(config.RATE_LIMIT)
+async def invoke_stream_endpoint(req: ChatRequest, request: Request = None):
     return run_agent_flow_stream(req.input, req.thread_id, force_mode=req.force_mode, execute=req.execute, reasoning_budget=req.reasoning_budget)
+
+@api.get("/v1/audit", dependencies=[Depends(verify_api_key)])
+async def get_audit_log(limit: int = 100, thread_id: Optional[str] = None):
+    """Restituisce le ultime voci dell'audit log dei tool call (Fase 0.4)."""
+    limit = max(1, min(limit, 500))
+    return {"entries": audit_log.get_recent(limit=limit, thread_id=thread_id)}
 
 @api.get("/v1/threads", response_model=List[ThreadSummary], dependencies=[Depends(verify_api_key)])
 async def list_threads():
