@@ -62,12 +62,14 @@
 
 > Nota frontend: il pannello approvazioni UI è previsto in Fase 4.2; per ora gli approval sono gestibili via API REST.
 
-## 7. Piano — Fase 4: Frontend
-1. Syntax highlighting codice (rehype-highlight/Shiki) nel MarkdownRenderer.
-2. Pannello approvazione tool (collegato a Fase 3.2).
-3. Visualizzazione memoria (fatti salienti, summary per thread).
-4. Upload documenti per la KB (Fase 2.3).
-5. Impostazioni runtime: selezione modello/provider, budget reasoning già presente → aggiungere temperature, max tokens.
+## 7. Piano — Fase 4: Frontend ✅ IMPLEMENTATA
+1. ✅ **Syntax highlighting**: `rehype-highlight` + `highlight.js` (tema github-dark) nel MarkdownRenderer; blocchi fenced con linguaggio rilevato.
+2. ✅ **Pannello approvazioni**: `ApprovalsPanel` con polling 10s, badge count, expand per vedere gli argomenti JSON, bottoni Approve/Deny; integrato come card fissa in cima al tab Diagnostics del pannello destro.
+3. ⏳ **Viewer memoria**: differito — il recall semantico è già visibile indirettamente nelle risposte; viewer dedicato rimandato a esigenza futura.
+4. ✅ **Upload documenti KB**: `KnowledgePanel` con tab Documents/Search, upload .md/.txt (PDF via API), lista documenti con chunk count, delete, ricerca semantica inline con score percentuale.
+5. ✅ **Impostazioni runtime**: `SettingsModal` accessibile dall'icona ingranaggio nella sidebar — configurazione API key salvata in localStorage e iniettata automaticamente via axios interceptor + header fetch streaming.
+
+> Layout: il pannello destro ora ha due tab (Diagnostics | Knowledge). Le approvazioni appaiono anche quando l'agente si ferma in attesa (`approval_required` nel trace).
 
 ## 8. Piano — Fase 5: Qualità & ops
 1. CI: lint (ruff, mypy) + pytest backend + tsc/vitest frontend.

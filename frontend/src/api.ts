@@ -2,9 +2,25 @@ import axios from 'axios';
 
 const API_BASE = import.meta.env.VITE_API_BASE || '/v1';
 
+// --- Fase 4: API key globale (localStorage, configurabile dall'utente) ---
+const API_KEY_STORAGE = 'main_agent_api_key';
+export function getApiKey(): string {
+  return localStorage.getItem(API_KEY_STORAGE) || '';
+}
+export function setApiKey(key: string): void {
+  localStorage.setItem(API_KEY_STORAGE, key.trim());
+}
+
 export const api = axios.create({
   baseURL: API_BASE,
   timeout: 120000,
+});
+
+// Interceptor: aggiunge X-API-Key a tutte le chiamate axios
+api.interceptors.request.use((config) => {
+  const key = getApiKey();
+  if (key) config.headers['X-API-Key'] = key;
+  return config;
 });
 
 export type AgentMode = 'chat' | 'ask' | 'act' | 'plan';
@@ -124,7 +140,7 @@ export async function sendStreamMessage(
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
-        // 'X-API-Key': ... add if you have it in context, else it will be handled by browser if not needed or you can pass it here
+        ...(getApiKey() ? { 'X-API-Key': getApiKey() } : {}),
       },
       body: JSON.stringify(req),
     });
@@ -197,4 +213,67 @@ export async function deleteThread(threadId: string): Promise<{ status: string }
 export async function deleteAllThreads(): Promise<{ status: string }> {
   const res = await api.delete<{ status: string }>('/threads');
   return res.data;
+}
+
+// --- Fase 4.2: Approvals ---
+
+export interface ApprovalItem {
+  request_id: string;
+  tool_name: string;
+  arguments: Record<string, any>;
+  thread_id: string | null;
+  mode: string | null;
+  age_seconds: number;
+}
+
+export async function listApprovals(threadId?: string): Promise<ApprovalItem[]> {
+  const res = await api.get<{ pending: ApprovalItem[] }>('/approvals', {
+    params: threadId ? { thread_id: threadId } : undefined,
+  });
+  return res.data.pending;
+}
+
+export async function approveRequest(requestId: string): Promise<{ request_id: string; status: string; result: any }> {
+  const res = await api.post(`/approvals/${encodeURIComponent(requestId)}/approve`);
+  return res.data;
+}
+
+export async function denyRequest(requestId: string): Promise<{ request_id: string; status: string; tool_name: string }> {
+  const res = await api.post(`/approvals/${encodeURIComponent(requestId)}/deny`);
+  return res.data;
+}
+
+// --- Fase 4.3/4.4: Knowledge Base ---
+
+export interface KbDocument {
+  filename: string;
+  doc_id?: string;
+  source?: string;
+  chunks: number;
+}
+
+export interface KbSearchResult {
+  filename: string;
+  doc_id?: string;
+  chunks: Array<{ content: string; score: number; chunk_index?: number }>;
+}
+
+export async function listKbDocuments(): Promise<KbDocument[]> {
+  const res = await api.get<{ documents: KbDocument[] }>('/kb/documents');
+  return res.data.documents;
+}
+
+export async function uploadKbDocument(filename: string, content: string): Promise<{ status: string; chunks_indexed: number }> {
+  const res = await api.post('/kb/documents', { filename, content });
+  return res.data;
+}
+
+export async function deleteKbDocument(filename: string): Promise<{ status: string; chunks_deleted: number }> {
+  const res = await api.delete<{ status: string; chunks_deleted: number }>(`/kb/documents/${encodeURIComponent(filename)}`);
+  return res.data;
+}
+
+export async function searchKb(query: string, k: number = 5): Promise<KbSearchResult[]> {
+  const res = await api.get<{ results: KbSearchResult[] }>('/kb/search', { params: { query, k } });
+  return res.data.results;
 }

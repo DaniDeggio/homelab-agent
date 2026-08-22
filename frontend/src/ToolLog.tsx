@@ -1,8 +1,12 @@
-import React from 'react';
-import { Wrench, Activity, ShieldCheck, ChevronRight, Zap, X, Info } from 'lucide-react';
+import React, { useState } from 'react';
+import { Wrench, Activity, ShieldCheck, ChevronRight, Zap, X, Info, BookOpen } from 'lucide-react';
 import type { ExecutionTraceItem, PlanStructure, RollbackAction } from './api';
 import { PlanViewer } from './components/PlanViewer';
 import { ExecutionTraceViewer } from './components/ExecutionTraceViewer';
+import { ApprovalsPanel } from './components/ApprovalsPanel';
+import { KnowledgePanel } from './components/KnowledgePanel';
+
+type PanelTab = 'diagnostics' | 'knowledge';
 
 interface ToolLogProps {
   toolUsed?: string;
@@ -11,6 +15,7 @@ interface ToolLogProps {
   executionTrace?: ExecutionTraceItem[];
   rollbackTrace?: RollbackAction[];
   mode?: string;
+  currentThreadId?: string | null;
   isOpen: boolean;
   onToggle: () => void;
   onCloseMobile?: () => void;
@@ -23,10 +28,12 @@ export const ToolLog: React.FC<ToolLogProps> = ({
   executionTrace,
   rollbackTrace,
   mode,
+  currentThreadId,
   isOpen,
   onToggle,
   onCloseMobile,
 }) => {
+  const [tab, setTab] = useState<PanelTab>('diagnostics');
   const hasContent = Boolean(
     toolUsed ||
     (planSteps && planSteps.length > 0) ||
@@ -63,6 +70,36 @@ export const ToolLog: React.FC<ToolLogProps> = ({
 
       {isOpen ? (
         <div className="flex-1 overflow-y-auto p-4 space-y-4">
+          {/* Tab switcher: Diagnostics | Knowledge */}
+          <div className="flex gap-1 bg-slate-950 rounded-lg p-0.5 border border-slate-800">
+            <button
+              onClick={() => setTab('diagnostics')}
+              className={`flex-1 flex items-center justify-center gap-1 px-2 py-1.5 rounded-md text-[10px] font-semibold transition ${
+                tab === 'diagnostics' ? 'bg-slate-800 text-slate-200' : 'text-slate-500 hover:text-slate-300'
+              }`}
+            >
+              <Activity size={11} />
+              Diagnostics
+            </button>
+            <button
+              onClick={() => setTab('knowledge')}
+              className={`flex-1 flex items-center justify-center gap-1 px-2 py-1.5 rounded-md text-[10px] font-semibold transition ${
+                tab === 'knowledge' ? 'bg-slate-800 text-slate-200' : 'text-slate-500 hover:text-slate-300'
+              }`}
+            >
+              <BookOpen size={11} />
+              Knowledge
+            </button>
+          </div>
+
+          {tab === 'knowledge' ? (
+            /* --- Fase 4.3/4.4: Knowledge Base panel --- */
+            <KnowledgePanel />
+          ) : (
+            <>
+          {/* --- Fase 4.2: Pending Approvals (sempre visibile in cima) --- */}
+          <ApprovalsPanel threadId={currentThreadId} />
+
           {/* Active Mode Card */}
           {mode && (
             <div className="bg-slate-950 border border-slate-800 rounded-xl p-3.5 space-y-1.5">
@@ -117,6 +154,8 @@ export const ToolLog: React.FC<ToolLogProps> = ({
             <div className="text-center py-8 text-xs text-slate-500">
               Send a prompt to see tool logs and plan execution here.
             </div>
+          )}
+            </>
           )}
         </div>
       ) : (

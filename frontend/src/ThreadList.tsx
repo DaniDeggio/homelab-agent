@@ -1,6 +1,7 @@
 import React, { useState } from 'react';
 import type { ThreadItem } from './api';
-import { MessageSquare, Plus, Search, RefreshCw, Cpu, X, Trash2, AlertTriangle } from 'lucide-react';
+import { MessageSquare, Plus, Search, RefreshCw, Cpu, X, Trash2, AlertTriangle, Settings } from 'lucide-react';
+import { SettingsModal } from './components/SettingsModal';
 
 interface ThreadListProps {
   threads: ThreadItem[];
@@ -29,6 +30,7 @@ export const ThreadList: React.FC<ThreadListProps> = ({
 }) => {
   const [searchTerm, setSearchTerm] = useState('');
   const [showConfirmClearAll, setShowConfirmClearAll] = useState(false);
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
 
   const filteredThreads = threads.filter(t => 
     t.thread_id.toLowerCase().includes(searchTerm.toLowerCase()) ||
@@ -75,6 +77,13 @@ export const ThreadList: React.FC<ThreadListProps> = ({
         </div>
 
         <div className="flex items-center gap-1">
+          <button
+            onClick={() => setIsSettingsOpen(true)}
+            className="p-1.5 text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded-md transition"
+            title="Impostazioni (API key)"
+          >
+            <Settings size={15} />
+          </button>
           {threads.length > 0 && (
             <button
               onClick={() => setShowConfirmClearAll(true)}
@@ -208,6 +217,9 @@ export const ThreadList: React.FC<ThreadListProps> = ({
         <span>Main-Agent v1.0</span>
         <span className="font-mono text-[10px]">192.168.1.176:8090</span>
       </div>
+
+      {/* Settings Modal (Fase 4.5) */}
+      <SettingsModal isOpen={isSettingsOpen} onClose={() => setIsSettingsOpen(false)} />
     </div>
   );
 };

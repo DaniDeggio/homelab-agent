@@ -108,6 +108,7 @@ export function App() {
           executionTrace={diagnostics.activeExecutionTrace}
           rollbackTrace={diagnostics.activeRollbackTrace}
           mode={diagnostics.activeMode}
+          currentThreadId={currentThreadId}
           isOpen={isToolLogOpen}
           onToggle={() => setIsToolLogOpen(!isToolLogOpen)}
           onCloseMobile={() => setIsMobileToolLogOpen(false)}

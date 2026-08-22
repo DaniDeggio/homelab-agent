@@ -1,6 +1,8 @@
 import React, { useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import remarkGfm from 'remark-gfm';
+import rehypeHighlight from 'rehype-highlight';
+import 'highlight.js/styles/github-dark.css';
 import { Copy, Check, ExternalLink } from 'lucide-react';
 
 interface MarkdownRendererProps {
@@ -13,6 +15,7 @@ export const MarkdownRenderer: React.FC<MarkdownRendererProps> = ({ content, cla
     <div className={`markdown-body space-y-2 text-slate-100 ${className}`}>
       <ReactMarkdown
         remarkPlugins={[remarkGfm]}
+        rehypePlugins={[[rehypeHighlight, { detect: true, ignoreMissing: true }]]}
         components={{
           // Styled headings
           h1: ({ children }) => (
@@ -170,9 +173,9 @@ const CodeBlock: React.FC<{ language: string; code: string }> = ({ language, cod
         </button>
       </div>
 
-      {/* Code Body */}
-      <pre className="p-3 overflow-x-auto text-slate-200 leading-relaxed font-mono text-[11px] sm:text-xs whitespace-pre">
-        <code>{code}</code>
+      {/* Code Body — highlighted da rehype-highlight (hljs classes) */}
+      <pre className="p-3 overflow-x-auto text-slate-200 leading-relaxed font-mono text-[11px] sm:text-xs whitespace-pre hljs bg-slate-950">
+        <code className={`hljs ${language ? `language-${language}` : ''}`}>{code}</code>
       </pre>
     </div>
   );
